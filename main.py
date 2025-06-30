@@ -6,9 +6,8 @@ import os
 import sys
 from dotenv import load_dotenv
 from langchain_openai import AzureChatOpenAI
-from langchain_core.messages import HumanMessage
 from pydantic import SecretStr
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, AIMessage, RemoveMessage
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
@@ -88,7 +87,7 @@ prompt_template = ChatPromptTemplate.from_messages(
     [
         (
             "system",
-            "You are a helpful assistant. Answer all questions to the best of your ability in {language}.",
+            "You are a helpful assistant. Answer all questions to the best of your ability in {language}. The provided chat history may include a summary of the earlier conversation.",
         ),
         MessagesPlaceholder(variable_name="messages"),
     ]
@@ -113,13 +112,48 @@ trimmer = trim_messages(
 
 # Define the function that calls the model
 def call_model(state: State):
-    trimmed_messages = trimmer.invoke(state["messages"])
-    print(trimmed_messages)
-    prompt = prompt_template.invoke(
-        {"messages": trimmed_messages, "language": state["language"]}
-    )
-    response = model.invoke(prompt)
-    return {"messages": [response]}
+    ## trim the message
+    # trimmed_messages = trimmer.invoke(state["messages"])
+    # print(trimmed_messages)
+    # prompt = prompt_template.invoke(
+    #     {"messages": trimmed_messages, "language": state["language"]}
+    # )
+    # response = model.invoke(prompt)
+    # return {"messages": [response]}
+
+    ## summarize the message
+    message_history = state["messages"][:-1]  # exclude the most recent user input
+    if len(message_history) >= 4:
+        last_human_message = state["messages"][-1]
+        # Invoke the model to generate conversation summary
+        summary_prompt = (
+            "Distill the above chat messages into a single summary message. Be aware of human message and AI message."
+            "Include as many specific details as you can. Your response should start with 'Chat History summary:'"
+        )
+        summary_message = model.invoke(
+            message_history + [HumanMessage(content=summary_prompt)]
+        )
+
+        # Delete messages that we no longer want to show up
+        # This remove all messages in the state
+        delete_messages = [RemoveMessage(id=m.id) for m in state["messages"]]
+        # Re-add user message
+        human_message = HumanMessage(content=last_human_message.content)
+        trimmed_messages = [summary_message, human_message]
+
+        # Call the model with summary & response
+        prompt = prompt_template.invoke(
+            {"messages": trimmed_messages, "language": state["language"]}
+        )
+        response = model.invoke(prompt)
+        print(response)
+        message_updates = [summary_message, human_message, response] + delete_messages
+    else:
+        prompt = prompt_template.invoke(
+            {"messages": state["messages"], "language": state["language"]}
+        )
+        message_updates = [model.invoke(prompt)]
+    return {"messages": message_updates}
 
 
 # Define the (single) node in the graph
@@ -130,26 +164,38 @@ workflow.add_node("model", call_model)
 memory = MemorySaver()
 app = workflow.compile(checkpointer=memory)
 
-config = {"configurable": {"thread_id": "abc123"}}
-query = "Hi! I'm Jim. Please tell me a joke."
-language = "Japanese"
+demo_ephemeral_chat_history = [
+    HumanMessage(content="Hey there! I'm Nemo."),
+    AIMessage(content="Hello!"),
+    HumanMessage(content="How are you today?"),
+    AIMessage(content="Fine thanks!"),
+]
 
-input_messages = [HumanMessage(query)]
-for chunk, metadata in app.stream(
-    {"messages": input_messages, "language": language},
-    config,
-    stream_mode="messages",
-):
-    if isinstance(chunk, AIMessage):  # Filter to just model responses
-        print(chunk.content, end="|")
+response= app.invoke(
+    {
+        "messages": demo_ephemeral_chat_history
+        + [HumanMessage(content="What's my name?")],
+        "language": "Japanese"
+    },
+    config={"configurable": {"thread_id": "2"}},
+)
 
-query = "これはどういう意味ですか"
+# Print all messages from the response
+messages = response["messages"]
+for i, message in enumerate(messages):
+    message.pretty_print()
 
-input_messages = [HumanMessage(query)]
-for chunk, metadata in app.stream(
-    {"messages": input_messages, "language": language},
-    config,
-    stream_mode="messages",
-):
-    if isinstance(chunk, AIMessage):  # Filter to just model responses
-        print(chunk.content, end="|")
+
+# config = {"configurable": {"thread_id": "2"}}
+# query = "Who am I?"
+# language = "Japanese"
+
+# # Will stream the response of the AI output 
+# input_messages = [HumanMessage(query)]
+# for chunk, metadata in app.stream(
+#     {"messages": input_messages, "language": language},
+#     config,
+#     stream_mode="messages",
+# ):
+#     if isinstance(chunk, AIMessage):  # Filter to just model responses
+#         print(chunk.content, end="|")
