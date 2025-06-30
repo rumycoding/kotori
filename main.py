@@ -14,6 +14,9 @@ from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from azure.monitor.opentelemetry.exporter import AzureMonitorTraceExporter
+from openinference.instrumentation.langchain import LangChainInstrumentor
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.trace.export import ConsoleSpanExporter, SimpleSpanProcessor
 
 # Load environment variables from .env file
 # Specify the path to the .env file explicitly
@@ -38,22 +41,16 @@ if missing_vars:
 # Azure OpenAI deployment name - this corresponds to the model you've deployed in Azure OpenAI
 AZURE_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "")  # Default to empty string if not set
 
+# Configure OpenTelemetry
 # Create telemetry exporter
 exporter = AzureMonitorTraceExporter.from_connection_string(
     os.environ["APPLICATIONINSIGHTS_CONNECTION_STRING"]
 )
-# Use the SDK TracerProvider that has the add_span_processor method
+# Use the SDK TracerProvider and set it up just once
 tracer_provider = TracerProvider()
-from openinference.instrumentation.langchain import LangChainInstrumentor
-from opentelemetry import trace as trace_api
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-from opentelemetry.sdk import trace as trace_sdk
-from opentelemetry.sdk.trace.export import ConsoleSpanExporter, SimpleSpanProcessor
-# Add span processor to the tracer provider before setting it as the global provider
 span_processor = BatchSpanProcessor(exporter, schedule_delay_millis=60000)
 tracer_provider.add_span_processor(span_processor)
-# Now set the configured tracer provider
-trace_api.set_tracer_provider(tracer_provider)
+# Set the configured tracer provider just once
 trace.set_tracer_provider(tracer_provider)
 tracer = trace.get_tracer(__name__)
 LangChainInstrumentor().instrument()
