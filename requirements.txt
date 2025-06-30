@@ -1,0 +1,10 @@
+langchain>=0.1.0
+openai>=1.6.1
+python-dotenv>=1.0.0
+faiss-cpu>=1.7.4
+tiktoken>=0.5.2
+langchain-openai
+azure-monitor-opentelemetry-exporter
+openinference-instrumentation-langchain 
+opentelemetry-sdk 
+opentelemetry-exporter-otlp
