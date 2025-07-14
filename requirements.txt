@@ -9,3 +9,6 @@ openinference-instrumentation-langchain
 opentelemetry-sdk 
 opentelemetry-exporter-otlp
 langgraph
+requests>=2.25.0
+pytest>=7.0.0
+pytest-mock>=3.10.0
