@@ -1,4 +1,5 @@
 import json
+import re
 import requests
 from typing import Dict, List, Optional
 from langchain_core.tools import tool
@@ -784,3 +785,352 @@ def get_deck_stats(deck_name: str) -> str:
         return "Error: Request to AnkiConnect timed out."
     except Exception as e:
         return f"Error getting deck stats: {str(e)}"
+
+@tool
+def answer_card(card_id: int, ease: int) -> str:
+    """
+    Answer/review a card to mark it as reviewed.
+    
+    Args:
+        card_id: The ID of the card to answer
+        ease: The ease rating (1=Again, 2=Hard, 3=Good, 4=Easy)
+        
+    Returns:
+        String indicating success or failure
+    """
+    try:
+        if ease not in [1, 2, 3, 4]:
+            return "Error: Ease must be 1 (Again), 2 (Hard), 3 (Good), or 4 (Easy)"
+        
+        anki_connect_url = "http://localhost:8765"
+        
+        payload = {
+            "action": "answerCards",
+            "version": 6,
+            "params": {
+                "answers": [
+                    {
+                        "cardId": card_id,
+                        "ease": ease
+                    }
+                ]
+            }
+        }
+        
+        response = requests.post(anki_connect_url, json=payload, timeout=10)
+        response.raise_for_status()
+        
+        result = response.json()
+        
+        if result.get("error"):
+            return f"Error answering card: {result['error']}"
+        
+        success = result.get("result", [])
+        
+        if success and len(success) > 0 and success[0]:
+            ease_names = {1: "Again", 2: "Hard", 3: "Good", 4: "Easy"}
+            return f"Successfully answered card {card_id} with ease: {ease_names[ease]}"
+        else:
+            return f"Failed to answer card {card_id}. Card may not exist or may not be in review mode."
+        
+    except requests.exceptions.ConnectionError:
+        return "Error: Could not connect to AnkiConnect. Make sure Anki is running and AnkiConnect addon is installed."
+    except requests.exceptions.Timeout:
+        return "Error: Request to AnkiConnect timed out."
+    except Exception as e:
+        return f"Error answering card: {str(e)}"
+
+
+@tool
+def answer_multiple_cards(card_answers: List[Dict[str, int]]) -> str:
+    """
+    Answer multiple cards at once.
+    
+    Args:
+        card_answers: List of dictionaries with 'card_id' and 'ease' keys
+                     Example: [{'card_id': 123, 'ease': 3}, {'card_id': 456, 'ease': 4}]
+        
+    Returns:
+        String indicating success or failure for each card
+    """
+    try:
+        if not card_answers:
+            return "Error: No card answers provided"
+        
+        anki_connect_url = "http://localhost:8765"
+        
+        # Prepare the answers in the format expected by AnkiConnect
+        answers = []
+        for card_answer in card_answers:
+            card_id = card_answer.get('card_id')
+            ease = card_answer.get('ease')
+            
+            if card_id is None or ease is None:
+                return "Error: Each card answer must have 'card_id' and 'ease' keys"
+            
+            if ease not in [1, 2, 3, 4]:
+                return f"Error: Ease for card {card_id} must be 1 (Again), 2 (Hard), 3 (Good), or 4 (Easy)"
+            
+            answers.append({
+                "cardId": card_id,
+                "ease": ease
+            })
+        
+        payload = {
+            "action": "answerCards",
+            "version": 6,
+            "params": {
+                "answers": answers
+            }
+        }
+        
+        response = requests.post(anki_connect_url, json=payload, timeout=10)
+        response.raise_for_status()
+        
+        result = response.json()
+        
+        if result.get("error"):
+            return f"Error answering cards: {result['error']}"
+        
+        success_results = result.get("result", [])
+        
+        # Format the results
+        ease_names = {1: "Again", 2: "Hard", 3: "Good", 4: "Easy"}
+        result_info = []
+        
+        for i, card_answer in enumerate(card_answers):
+            card_id = card_answer['card_id']
+            ease = card_answer['ease']
+            
+            if i < len(success_results) and success_results[i]:
+                result_info.append(f"✓ Card {card_id}: {ease_names[ease]}")
+            else:
+                result_info.append(f"✗ Card {card_id}: Failed to answer")
+        
+        successful_count = sum(1 for success in success_results if success)
+        total_count = len(card_answers)
+        
+        summary = f"Answered {successful_count}/{total_count} cards successfully:\n"
+        summary += "\n".join(result_info)
+        
+        return summary
+        
+    except requests.exceptions.ConnectionError:
+        return "Error: Could not connect to AnkiConnect. Make sure Anki is running and AnkiConnect addon is installed."
+    except requests.exceptions.Timeout:
+        return "Error: Request to AnkiConnect timed out."
+    except Exception as e:
+        return f"Error answering cards: {str(e)}"
+
+
+@tool
+def find_cards_to_talk_about(deck_name: Optional[str] = None, limit: int = 5) -> str:
+    """
+    Find cards for the LLM to talk about with intelligent priority logic.
+    
+    Priority order:
+    1. Cards that are due for review
+    2. Cards that are in learning state
+    3. Cards that need review (review queue)
+    4. Any cards from the deck
+    
+    Args:
+        deck_name: Optional deck name to filter by
+        limit: Maximum number of cards to return (default: 5)
+        
+    Returns:
+        String containing cards for discussion or error message
+    """
+    try:
+        anki_connect_url = "http://localhost:8765"
+        
+        # List of search queries in priority order
+        search_queries = []
+        
+        # Build deck filter
+        deck_filter = f'deck:"{deck_name}" ' if deck_name else ""
+        
+        # Priority 1: Due cards
+        search_queries.append((f"{deck_filter}is:due", "due"))
+        
+        # Priority 2: Learning cards
+        search_queries.append((f"{deck_filter}is:learn", "learning"))
+        
+        # Priority 3: Review cards
+        search_queries.append((f"{deck_filter}is:review", "review"))
+        
+        # Priority 4: Any cards
+        search_queries.append((f"{deck_filter}*", "any"))
+        
+        found_cards = []
+        selected_category = None
+        
+        # Try each search query in priority order
+        for search_query, category in search_queries:
+            card_ids = _find_cards_by_query(search_query, anki_connect_url, limit)
+            
+            if card_ids:
+                found_cards = card_ids
+                selected_category = category
+                break
+        
+        if not found_cards or selected_category is None:
+            deck_msg = f" in deck '{deck_name}'" if deck_name else ""
+            return f"No cards found{deck_msg} to talk about."
+        
+        # Get detailed information about the cards
+        cards_info = _get_cards_info(found_cards, anki_connect_url)
+        
+        if not cards_info:
+            return "Error: Could not retrieve card details."
+        
+        # Format the results for LLM consumption
+        formatted_cards = []
+        for card in cards_info:
+            card_info = {}
+            card_info['card_id'] = card.get('cardId', 'Unknown')
+            card_info['deck'] = card.get('deckName', 'Unknown')
+            card_info['note_type'] = card.get('modelName', 'Unknown')
+            card_info['due'] = card.get('due', 'Unknown')
+            card_info['interval'] = card.get('interval', 'Unknown')
+            card_info['ease'] = card.get('factor', 'Unknown')
+            
+            # Clean up question and answer for LLM
+            question = card.get('question', '').strip()
+            answer = card.get('answer', '').strip()
+            
+            if question:
+                # Remove HTML tags
+                question_clean = re.sub(r'<[^>]*>', '', question)
+                card_info['question'] = question_clean.strip()
+            
+            if answer:
+                # Remove HTML tags
+                answer_clean = re.sub(r'<[^>]*>', '', answer)
+                card_info['answer'] = answer_clean.strip()
+            
+            formatted_cards.append(card_info)
+        
+        # Create a summary for the LLM
+        deck_info = f" from deck '{deck_name}'" if deck_name else ""
+        category_description = {
+            "due": "cards that are due for review",
+            "learning": "cards that are currently being learned",
+            "review": "cards in the review queue",
+            "any": "available cards"
+        }
+        
+        summary = f"Found {len(formatted_cards)} {category_description[selected_category]}{deck_info} to discuss:\n\n"
+        
+        # Format each card for easy LLM consumption
+        for i, card in enumerate(formatted_cards, 1):
+            summary += f"Card {i}:\n"
+            summary += f"  • ID: {card['card_id']}\n"
+            summary += f"  • Deck: {card['deck']}\n"
+            summary += f"  • Type: {card['note_type']}\n"
+            
+            if card.get('question'):
+                summary += f"  • Question: {card['question']}\n"
+            if card.get('answer'):
+                summary += f"  • Answer: {card['answer']}\n"
+            
+            summary += f"  • Due: {card['due']}\n"
+            summary += f"  • Interval: {card['interval']} days\n"
+            summary += f"  • Ease: {card['ease']}\n"
+            summary += "\n"
+        
+        summary += f"These cards are categorized as '{selected_category}' and can be used for discussion, "
+        summary += "practice, or further study. You can ask questions about them or use them as conversation starters."
+        
+        return summary
+        
+    except requests.exceptions.ConnectionError:
+        return "Could not connect to AnkiConnect. Make sure Anki is running and AnkiConnect addon is installed."
+    except requests.exceptions.Timeout:
+        return "Request to AnkiConnect timed out."
+    except Exception as e:
+        return f"Error finding cards to talk about: {str(e)}"
+
+def _find_cards_by_query(query: str, anki_connect_url: str, limit: int = 10) -> List[int]:
+    """
+    Helper function to find cards by search query.
+    
+    Args:
+        query: Search query string
+        anki_connect_url: AnkiConnect URL
+        limit: Maximum number of cards to return
+        
+    Returns:
+        List of card IDs or empty list if error/no results
+    """
+    try:
+        payload = {
+            "action": "findCards",
+            "version": 6,
+            "params": {
+                "query": query
+            }
+        }
+        
+        response = requests.post(anki_connect_url, json=payload, timeout=10)
+        response.raise_for_status()
+        
+        result = response.json()
+        
+        if result.get("error"):
+            return []
+        
+        card_ids = result.get("result", [])
+        return card_ids[:limit]
+        
+    except requests.exceptions.ConnectionError:
+        # Re-raise connection errors so they can be handled by the caller
+        raise
+    except requests.exceptions.Timeout:
+        # Re-raise timeout errors so they can be handled by the caller
+        raise
+    except Exception as e:
+        # Re-raise all other exceptions so they can be handled by the caller
+        raise
+
+
+def _get_cards_info(card_ids: List[int], anki_connect_url: str) -> List[Dict]:
+    """
+    Helper function to get detailed information about cards.
+    
+    Args:
+        card_ids: List of card IDs
+        anki_connect_url: AnkiConnect URL
+        
+    Returns:
+        List of card info dictionaries or empty list if error
+    """
+    try:
+        payload = {
+            "action": "cardsInfo",
+            "version": 6,
+            "params": {
+                "cards": card_ids
+            }
+        }
+        
+        response = requests.post(anki_connect_url, json=payload, timeout=10)
+        response.raise_for_status()
+        
+        result = response.json()
+        
+        if result.get("error"):
+            return []
+        
+        return result.get("result", [])
+        
+    except requests.exceptions.ConnectionError:
+        # Re-raise connection errors so they can be handled by the caller
+        raise
+    except requests.exceptions.Timeout:
+        # Re-raise timeout errors so they can be handled by the caller
+        raise
+    except Exception as e:
+        # Re-raise all other exceptions so they can be handled by the caller
+        raise
+
