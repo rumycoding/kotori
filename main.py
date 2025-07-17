@@ -18,7 +18,9 @@ from opentelemetry.sdk.trace.export import ConsoleSpanExporter, SimpleSpanProces
 
 from anki.anki import (
     add_anki_note,
+    _check_anki_connection_internal,
     check_anki_connection,
+    create_anki_deck,
     get_note_by_id,
     search_notes_by_content,
     find_cards_to_talk_about,
@@ -60,8 +62,13 @@ model = AzureChatOpenAI(
 )
 
 prompt = (
-    "You are a helpful assistant to help user learn language. "
-    "You have access to the anki. Please use deck 'Kotori'. If you find that the user does not know a word while chatting, you could add a note in anki. If the user does not have topic to talk about, you could find_cards_to_talk_about and evaluate how the user know the word and answer the card. If you encounter any error, ask the user to take action. You may not need to use tools for every query - the user may just want to chat!"
+    "You are a helpful assistant to help users learn language through natural conversation. "
+    "You have access to Anki flashcards in the 'Kotori' deck. Your main goals are: "
+    "1. When you notice a user doesn't know a word during conversation, add it to Anki for future study. Add it directly without prompting the user."
+    "2. When a user needs conversation topics, use find_cards_to_talk_about to retrieve vocabulary words, then create natural conversation topics around those words WITHOUT revealing the actual card questions or answers. "
+    "3. Engage the user in conversation using the retrieved vocabulary naturally, allowing you to assess their knowledge organically through context. "
+    "4. Only use answer_card when the user has naturally demonstrated their understanding or lack thereof during conversation. "
+    "If you encounter any errors, ask the user to take action. Remember, not every query needs tools - sometimes users just want to chat naturally!"
 )
 
 tools = [add_anki_note,
@@ -72,17 +79,30 @@ tools = [add_anki_note,
     answer_card,
     answer_multiple_cards]
 
+# Check if deck Kotori exists, if not create it
+try:
+    ankiConnection = _check_anki_connection_internal().json()
+    if ankiConnection.get("error"):
+        raise Exception(ankiConnection["error"])
+    
+    create_result = create_anki_deck.invoke({
+        "deck_name": "Kotori",
+    })
+    
+except Exception as e:
+    print(f"Anki connection error: {str(e)}")
+    print("Anki connection failed. Please ensure Anki is running and the AnkiConnect plugin is installed.")
+    sys.exit(1)
+
 from langgraph.prebuilt import create_react_agent
 
-from langchain.agents import AgentExecutor
+# Create the ReAct agent using LangGraph
+# This returns a compiled graph that can be invoked directly
+from langgraph.checkpoint.memory import MemorySaver
 
-# prompt allows you to preprocess the inputs to the model inside ReAct agent
-# in this case, since we're passing a prompt string, we'll just always add a SystemMessage
-# with this prompt string before any other messages sent to the model
-agent = create_react_agent(model, tools, prompt=prompt)
 
-# Create an agent executor
-agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
+memory = MemorySaver()
+agent = create_react_agent(model, tools, prompt=prompt, checkpointer=memory)
 
 # Simple REPL demo
 if __name__ == "__main__":
@@ -92,6 +112,17 @@ if __name__ == "__main__":
         if user_input.strip().lower() in {"exit", "quit"}:
             print("Agent: Goodbye! 👋")
             break
-        # Use invoke on the executor
-        result = agent_executor.invoke({"input": user_input})
-        print(f"Agent: {result['output']}\n")
+        try:
+            # Use invoke on the agent with messages including system prompt
+            messages = [
+                HumanMessage(content=user_input)
+            ]
+
+            result=agent.invoke(
+                {"messages": messages},
+                config={"configurable": {"thread_id": "1"}},
+                )
+            
+            print(f"Agent: {result['messages'][-1].content}\n")
+        except Exception as e:
+            print(f"Agent: Sorry, I encountered an error: {str(e)}\n")

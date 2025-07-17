@@ -9,18 +9,18 @@ from langchain_core.tools import tool
 def add_anki_note(
     front: str,
     back: str,
-    deck_name: str = "Default",
+    deck_name: str = "Kotori",
     note_type: str = "Basic",
     tags: Optional[List[str]] = None,
     audio_url: Optional[str] = None
 ) -> str:
     """
-    Add a note to Anki using AnkiConnect.
+    Add a note to Anki using AnkiConnect, by default, will add notes to Deck Kotori.
     
     Args:
         front: The front side of the card (question/prompt)
         back: The back side of the card (answer/explanation)
-        deck_name: Name of the Anki deck to add the note to (default: "Default")
+        deck_name: Name of the Anki deck to add the note to (default: "Kotori")
         note_type: Type of note template (default: "Basic")
         tags: Optional list of tags to add to the note
         audio_url: Optional URL of audio file to attach to the note
@@ -191,6 +191,25 @@ def get_anki_decks() -> str:
         return f"Error getting deck names: {str(e)}"
 
 
+def _check_anki_connection_internal() -> requests.Response:
+    """
+    Internal function to check if AnkiConnect is available.
+    
+    Returns:
+        Response object from the AnkiConnect request
+    """
+    anki_connect_url = "http://localhost:8765"
+    
+    payload = {
+        "action": "version",
+        "version": 6
+    }
+    
+    response = requests.post(anki_connect_url, json=payload, timeout=5)
+    response.raise_for_status()
+    
+    return response
+
 @tool
 def check_anki_connection() -> str:
     """
@@ -200,17 +219,7 @@ def check_anki_connection() -> str:
         String indicating the connection status
     """
     try:
-        anki_connect_url = "http://localhost:8765"
-        
-        payload = {
-            "action": "version",
-            "version": 6
-        }
-        
-        response = requests.post(anki_connect_url, json=payload, timeout=5)
-        response.raise_for_status()
-        
-        result = response.json()
+        result = _check_anki_connection_internal().json()
         
         if result.get("error"):
             return f"AnkiConnect error: {result['error']}"
@@ -229,7 +238,7 @@ def check_anki_connection() -> str:
 @tool
 def query_anki_notes(
     query: str = "",
-    deck_name: Optional[str] = None,
+    deck_name: Optional[str] = "Kotori",
     note_type: Optional[str] = None,
     tags: Optional[List[str]] = None,
     limit: int = 20
@@ -239,7 +248,7 @@ def query_anki_notes(
     
     Args:
         query: Search query string (searches in note content)
-        deck_name: Filter by specific deck name
+        deck_name: Filter by specific deck name (default: "Kotori")
         note_type: Filter by note type/model
         tags: Filter by tags (notes must have ALL specified tags)
         limit: Maximum number of notes to return (default: 20)
@@ -924,7 +933,7 @@ def answer_multiple_cards(card_answers: List[Dict[str, int]]) -> str:
 
 
 @tool
-def find_cards_to_talk_about(deck_name: Optional[str] = None, limit: int = 5) -> str:
+def find_cards_to_talk_about(deck_name: Optional[str], limit: int = 5) -> str:
     """
     Find cards for the LLM to talk about with intelligent priority logic.
     
@@ -935,7 +944,7 @@ def find_cards_to_talk_about(deck_name: Optional[str] = None, limit: int = 5) ->
     4. Any cards from the deck
     
     Args:
-        deck_name: Optional deck name to filter by
+        deck_name: Optional deck name to filter by 
         limit: Maximum number of cards to return (default: 5)
         
     Returns:
