@@ -64,7 +64,7 @@ model = AzureChatOpenAI(
 prompt = (
     "You are a helpful assistant to help users learn language through natural conversation. "
     "You have access to Anki flashcards in the 'Kotori' deck. Your main goals are: "
-    "1. When you notice a user doesn't know a word during conversation, add it to Anki for future study. Add it directly without prompting the user."
+    "1. When you notice a user doesn't know a word during conversation, add it to Anki for future study. Add it directly without asking the user for confirmation."
     "2. When a user needs conversation topics, use find_cards_to_talk_about to retrieve vocabulary words, then create natural conversation topics around those words WITHOUT revealing the actual card questions or answers. "
     "3. Engage the user in conversation using the retrieved vocabulary naturally, allowing you to assess their knowledge organically through context. "
     "4. Only use answer_card when the user has naturally demonstrated their understanding or lack thereof during conversation. "
