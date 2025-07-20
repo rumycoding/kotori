@@ -4,6 +4,7 @@ Kotori - A chatbot with memory using LangChain and Azure OpenAI
 
 import os
 import sys
+import asyncio
 from dotenv import load_dotenv
 from langchain_openai import AzureChatOpenAI
 from pydantic import SecretStr
@@ -15,6 +16,7 @@ from azure.monitor.opentelemetry.exporter import AzureMonitorTraceExporter
 from openinference.instrumentation.langchain import LangChainInstrumentor
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.trace.export import ConsoleSpanExporter, SimpleSpanProcessor
+from kotoribot.kotori_bot import KotoriBot, KotoriConfig
 
 from anki.anki import (
     add_anki_note,
@@ -61,24 +63,6 @@ model = AzureChatOpenAI(
     api_key=SecretStr(os.environ["AZURE_OPENAI_API_KEY"])
 )
 
-prompt = (
-    "You are a helpful assistant to help users learn language through natural conversation. "
-    "You have access to Anki flashcards in the 'Kotori' deck. Your main goals are: "
-    "1. When you notice a user doesn't know a word during conversation, add it to Anki for future study. Add it directly without asking the user for confirmation."
-    "2. When a user needs conversation topics, use find_cards_to_talk_about to retrieve vocabulary words, then create natural conversation topics around those words WITHOUT revealing the actual card questions or answers. "
-    "3. Engage the user in conversation using the retrieved vocabulary naturally, allowing you to assess their knowledge organically through context. "
-    "4. Only use answer_card when the user has naturally demonstrated their understanding or lack thereof during conversation. "
-    "If you encounter any errors, ask the user to take action. Remember, not every query needs tools - sometimes users just want to chat naturally!"
-)
-
-tools = [add_anki_note,
-    check_anki_connection,
-    get_note_by_id,
-    search_notes_by_content,
-    find_cards_to_talk_about,
-    answer_card,
-    answer_multiple_cards]
-
 # Check if deck Kotori exists, if not create it
 try:
     ankiConnection = _check_anki_connection_internal().json()
@@ -101,28 +85,17 @@ from langgraph.prebuilt import create_react_agent
 from langgraph.checkpoint.memory import MemorySaver
 
 
-memory = MemorySaver()
-agent = create_react_agent(model, tools, prompt=prompt, checkpointer=memory)
 
 # Simple REPL demo
-if __name__ == "__main__":
+async def main():
     print("Welcome to your ReAct Anki Agent! Type 'exit' to quit.")
-    while True:
-        user_input = input("You: ")
-        if user_input.strip().lower() in {"exit", "quit"}:
-            print("Agent: Goodbye! 👋")
-            break
-        try:
-            # Use invoke on the agent with messages including system prompt
-            messages = [
-                HumanMessage(content=user_input)
-            ]
+    config: KotoriConfig = {
+        "language": "english",
+        "deck_name": "Kotori"
+    }
+    
+    bot = KotoriBot(model, config)
+    await bot.run_conversation()
 
-            result=agent.invoke(
-                {"messages": messages},
-                config={"configurable": {"thread_id": "1"}},
-                )
-            
-            print(f"Agent: {result['messages'][-1].content}\n")
-        except Exception as e:
-            print(f"Agent: Sorry, I encountered an error: {str(e)}\n")
+if __name__ == "__main__":
+    asyncio.run(main())
