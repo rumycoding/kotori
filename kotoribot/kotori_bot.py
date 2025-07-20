@@ -514,7 +514,7 @@ class KotoriBot:
             
             # Append the assessment to assessment history
             current_assessment = f"Assessment of message '{last_user_message.content[:50]}...': {assessment_response.content}\n\n"
-            state["assessment_history"] = state.get("assessment_history", "") + " " + current_assessment
+            state["assessment_history"] = state.get("assessment_history", "") + "\n" + current_assessment
             
             # Continue the conversation after assessment
             state["next"] = "conversation"
@@ -784,7 +784,7 @@ Continue the conversation naturally while being ready to help with vocabulary an
         
         # Store the assessment in learning opportunities for later use
         current_assessment = f"Free Conversation Assessment - {user_message.content[:30]}...: {assessment_response.content}\n\n"
-        state['assessment_history'] = state.get('assessment_history', "") + current_assessment
+        state['assessment_history'] = state.get('assessment_history', "") + "\n" + current_assessment
         
     
     async def run_conversation(self, initial_state: Optional[KotoriState] = None, thread_id: str = "1"):

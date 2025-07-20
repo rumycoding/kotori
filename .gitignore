@@ -4,3 +4,4 @@ misc/
 __pycache__/
 .pytest_cache/
 chatbot/
+node_modules/

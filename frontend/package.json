@@ -1,0 +1,63 @@
+{
+  "name": "kotori-ui",
+  "version": "1.0.0",
+  "description": "React frontend for Kotori Language Learning Bot",
+  "private": true,
+  "dependencies": {
+    "@emotion/react": "^11.11.0",
+    "@emotion/styled": "^11.11.0",
+    "@mui/icons-material": "^5.14.0",
+    "@mui/material": "^5.14.0",
+    "@tanstack/react-query": "^4.32.0",
+    "@types/node": "^18.0.0",
+    "@types/react": "^18.0.0",
+    "@types/react-dom": "^18.0.0",
+    "date-fns": "^2.30.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-flow-renderer": "^10.3.17",
+    "react-markdown": "^8.0.7",
+    "react-scripts": "^5.0.1",
+    "react-syntax-highlighter": "^15.6.1",
+    "react-use-websocket": "^4.5.0",
+    "recharts": "^2.8.0",
+    "socket.io-client": "^4.7.0",
+    "typescript": "^4.9.5",
+    "uuid": "^9.0.0",
+    "web-vitals": "^3.0.0"
+  },
+  "devDependencies": {
+    "@types/react-syntax-highlighter": "^15.5.0",
+    "@types/uuid": "^9.0.0",
+    "@typescript-eslint/eslint-plugin": "^5.62.0",
+    "@typescript-eslint/parser": "^5.62.0",
+    "eslint": "^8.45.0",
+    "eslint-plugin-react": "^7.33.0",
+    "eslint-plugin-react-hooks": "^4.6.0"
+  },
+  "scripts": {
+    "prestart": "npm list react-scripts@5.0.1 || npm install react-scripts@5.0.1 --legacy-peer-deps",
+    "start": "npx react-scripts start",
+    "build": "npx react-scripts build",
+    "test": "npx react-scripts test",
+    "eject": "npx react-scripts eject",
+    "lint": "eslint src --ext .ts,.tsx",
+    "lint:fix": "eslint src --ext .ts,.tsx --fix",
+    "install-deps": "npm install --legacy-peer-deps",
+    "fix-scripts": "npm uninstall react-scripts && npm install react-scripts@5.0.1 --legacy-peer-deps",
+    "dev": "npm run fix-scripts && npm run start"
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  },
+  "proxy": "http://localhost:8000"
+}
