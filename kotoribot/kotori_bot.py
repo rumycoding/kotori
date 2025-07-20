@@ -41,6 +41,8 @@ class KotoriState(TypedDict):
     learning_opportunities: str
     
     calling_node: str  # Track which node called the tools
+    
+    counter: int
 
     
 class KotoriConfig(TypedDict):
@@ -162,7 +164,7 @@ class KotoriBot:
         self.graph.add_conditional_edges(
             "free_conversation_eval",
             self._route_next,
-            ["assessment", "topic_selection_prompt", END]
+            ["assessment", "topic_selection_prompt", "free_conversation", END]
         )
     
     def _route_next(self, state: KotoriState) -> str:
@@ -330,6 +332,7 @@ class KotoriBot:
         state['learning_goals'] = ''
         state['assessment_history'] = ''
         state['learning_opportunities'] = ''
+        state['counter'] = 0
         return state
     
     async def _conversation_node(self, state: KotoriState) -> KotoriState:
@@ -340,6 +343,8 @@ class KotoriBot:
         language = self.config.get('language', 'english')
         deck = self.config.get('deck_name', 'Kotori')  # Default deck name
         learning_goal = state.get('learning_goals', 'general conversation')
+        
+        state["calling_node"] = "conversation"  # Track which node called the tools
         
         # Create a simple prompt for the LLM
         system_message = SystemMessage(content=f"""
@@ -364,6 +369,13 @@ class KotoriBot:
         response = await llm_with_tools.ainvoke([
             system_message]+ state["messages"])
         
+        state["messages"].append(response)
+        
+        if tools_condition(state["messages"]) == "tools":
+            # If tools were called, route to the tool node
+            state["next"] = "tools"
+            return state
+        
         # Handle both string and message responses
         content = getattr(response, 'content', str(response))
         
@@ -371,8 +383,6 @@ class KotoriBot:
         user_input = interrupt(content)
         
         # Add both assistant message and user response to messages
-        ai_msg = AIMessage(content=content)
-        state["messages"].append(ai_msg)
         user_msg = HumanMessage(content=user_input)
         state["messages"].append(user_msg)
         
@@ -401,17 +411,48 @@ class KotoriBot:
         
         # First, check if the user wants to continue the current topic
         continue_topic_prompt = f"""
-        Analyze the user's message to determine if they want to continue discussing the current topic or if they want to change topics.
+        Analyze the user's latest message to determine their intent for the conversation flow with active cards.
         
-        Look for signals like:
-        - Asking to change topics or talk about something else
-        - Expressing that they're done with the current subject
-        - Asking for a new topic or different conversation
-        - Saying they want to move on
+        TARGET DECISION: Classify the user's intent into exactly ONE category.
         
-        Respond with exactly one of:
-        - "CONTINUE" if they want to keep discussing the current topic
-        - "CHANGE_TOPIC" if they want to change topics or are done with current discussion
+        INPUT CONTEXT:
+        - Current active cards: {active_cards}
+        - Recent conversation history focused on active vocabulary
+        - Target language: {language}
+        
+        CLASSIFICATION CRITERIA:
+        1. "CONTINUE" if:
+           - User responds naturally without using active cards vocabulary
+           - They ask general questions not related to active cards
+           - They continue conversation but don't demonstrate active vocabulary usage
+           - They request clarification about topics unrelated to active cards
+        
+        2. "REQUIRE_ASSESSMENT" if:
+           - User actively uses words, patterns, or grammar from the active cards
+           - They attempt to apply vocabulary from active cards in their response
+           - They demonstrate usage of specific grammar structures from active cards
+           - Their message contains clear attempts at using active cards content
+        
+        3. "CHANGE_TOPIC" if:
+           - User explicitly mentions wanting different vocabulary or topics
+           - They express that they understand the current cards well enough
+           - They ask to move to different flashcards or learning material
+           - They indicate they're done with the current active cards
+           - They use phrases like "I got it" or "let's try different cards"
+        
+        RESPONSE FORMAT:
+        Return ONLY ONE of these exact strings without explanation:
+        - "CONTINUE"
+        - "REQUIRE_ASSESSMENT"
+        - "CHANGE_TOPIC"
+        
+        EXAMPLES:
+        "Can you use that word in another sentence?" → CONTINUE
+        "I think the weather is really [active_card_word] today" → REQUIRE_ASSESSMENT
+        "I understand these words now, can we try others?" → CHANGE_TOPIC
+        "What's the difference between X and Y?" (where X,Y are from active cards) → CONTINUE
+        "Let's practice different vocabulary" → CHANGE_TOPIC
+        "I tried to [active_card_grammar_pattern] yesterday" → REQUIRE_ASSESSMENT
         """
         
         topic_decision_response = await self.llm.ainvoke([
@@ -430,24 +471,39 @@ class KotoriBot:
             else:
                 # No assessment history, go back to topic selection
                 state["next"] = "topic_selection_prompt"
-        else:
-            # User wants to continue - perform assessment on their message
+        elif "REQUIRE_ASSESSMENT" in topic_decision:
+            # User used active cards vocabulary - perform assessment on their message
             assessment_prompt = f"""
-            You are assessing a language learner's understanding of specific vocabulary in {language}. Assess the latest user message based on the active cards.
+            You are assessing a language learner's mastery of specific active vocabulary cards in {language}.
             
-            Current active vocabulary: {active_cards}
+            ASSESSMENT FOCUS: Evaluate how well the user demonstrates understanding of the active cards vocabulary.
             
-            Analyze the user's latest message to evaluate:
-            1. Correct usage of target vocabulary from the active cards
-            2. Demonstrated comprehension of the vocabulary meaning
-            3. Appropriate contextual usage of the vocabulary
+            ACTIVE CARDS VOCABULARY: {active_cards}
             
-            Provide a brief assessment in this format:
-            VOCABULARY_USAGE: [score 1-5] - [comment on how correctly they used the vocabulary]
-            COMPREHENSION: [score 1-5] - [comment on their understanding of the vocabulary meaning]
-            CONTEXT: [score 1-5] - [comment on appropriate contextual usage]
-            OVERALL: [score 1-5] - [overall assessment of vocabulary mastery]
-            NEXT_STEPS: [specific suggestion for vocabulary improvement briefly]
+            ASSESSMENT CRITERIA:
+            Analyze the user's latest message specifically for their interaction with the active cards vocabulary:
+            
+            1. ACTIVE VOCABULARY USAGE: How correctly they use words/phrases from the active cards
+            2. COMPREHENSION DEPTH: Their demonstrated understanding of the active vocabulary meanings
+            3. CONTEXTUAL APPLICATION: How appropriately they apply active vocabulary in context
+            4. RETENTION INDICATORS: Signs they've internalized the active cards content
+            
+            SCORING GUIDELINES:
+            - 5: Excellent mastery of active cards vocabulary
+            - 4: Good understanding with minor gaps in active vocabulary
+            - 3: Fair grasp of active cards with some confusion
+            - 2: Limited understanding of active vocabulary
+            - 1: Minimal comprehension of active cards content
+            
+            ASSESSMENT FORMAT:
+            ACTIVE_VOCABULARY_USAGE: [score 1-5] - [specific comment on usage of words from active cards]
+            COMPREHENSION_DEPTH: [score 1-5] - [comment on understanding of active vocabulary meanings]
+            CONTEXTUAL_APPLICATION: [score 1-5] - [comment on contextual use of active cards vocabulary]
+            RETENTION_INDICATORS: [score 1-5] - [signs of internalization of active cards content]
+            OVERALL_ACTIVE_CARDS_MASTERY: [score 1-5] - [overall assessment focused on active cards progress]
+            NEXT_STEPS_FOR_ACTIVE_CARDS: [1-2 specific suggestions for improving active vocabulary mastery]
+            
+            FOCUS: Keep assessment strictly related to the active cards vocabulary rather than general language skills.
             """
             
             recent_messages = state["messages"][-6:] if len(state["messages"]) >= 6 else state["messages"]
@@ -463,7 +519,10 @@ class KotoriBot:
             current_assessment = f"Assessment of message '{last_user_message.content[:50]}...': {assessment_response.content}\n\n"
             state["assessment_history"] = state.get("assessment_history", "") + " " + current_assessment
             
-            # Continue the conversation
+            # Continue the conversation after assessment
+            state["next"] = "conversation"
+        else:
+            # User wants to continue but didn't use active cards vocabulary - no assessment needed
             state["next"] = "conversation"
         
         return state
@@ -575,14 +634,20 @@ Continue the conversation naturally while being ready to help with vocabulary an
         
         # Handle both string and message responses
         content = getattr(response, 'content', str(response))
+        state["messages"].append(response)
+        
+        if tools_condition(state["messages"]) == "tools":
+            # If tools were called, route to the tool node
+            state["next"] = "tools"
+            return state
         
         # Use interrupt to get user input
         user_input = interrupt(content)
         
         # Add both assistant message and user response to messages
-        state["messages"].append(response)
         user_msg = HumanMessage(content=user_input)
         state["messages"].append(user_msg)
+        state["counter"] = state.get("counter", 0) + 1
         
         # After assistant responds, route to evaluation to check user's next input
         # The evaluation node will determine whether to continue, assess, or change topics
@@ -609,48 +674,80 @@ Continue the conversation naturally while being ready to help with vocabulary an
             return state
         
         language = self.config.get('language', 'english')
-        
+        recent_messages = state["messages"][-6:] if len(state["messages"]) >= 6 else state["messages"]
         # First, check if the user wants to continue free conversation or change topics
         continue_conversation_prompt = f"""
-        Analyze the user's message to determine if they want to continue the current free conversation or if they want to change topics/end the conversation.
+        Analyze the user's latest message to determine their intent for the conversation flow.
         
-        Look for signals like:
-        - Asking to change topics or talk about something else
-        - Expressing that they're done with the current conversation
-        - Asking for structured practice or specific activities
-        - Saying they want to move on or try something different
-        - Requesting to work on cards or specific vocabulary
+        TARGET DECISION: Classify the user's intent into exactly ONE category.
         
-        Respond with exactly one of:
-        - "CONTINUE_FREE" if they want to keep having free conversation
-        - "CHANGE_TOPIC" if they want to change topics or switch to structured learning
-        - "REQUEST_ASSESSMENT" if they're asking for feedback on their language use
+        INPUT CONTEXT:
+        - Recent message history: {recent_messages}
+        - Current language focus: {language}
+        
+        CLASSIFICATION CRITERIA:
+        1. "CONTINUE_FREE" if:
+           - User is engaged in the current topic and wants to continue
+           - They ask a follow-up question related to the current topic
+           - They respond naturally without indicating desire for change or feedback
+           - They request vocabulary help without asking for assessment
+        
+        2. "CHANGE_TOPIC" if:
+           - User explicitly mentions wanting a different topic
+           - They express boredom or disinterest in current conversation
+           - They ask to switch to structured learning or flashcard practice
+           - They indicate they're done with the current activity
+           - They use phrases like "let's talk about X instead" or "can we try something else"
+        
+        3. "REQUEST_ASSESSMENT" if:
+           - User explicitly asks for feedback on their language use
+           - They ask how they're doing with grammar, vocabulary, or pronunciation
+           - They ask if a sentence they wrote is correct
+           - They request evaluation of their progress or skills
+           - They produce a complex sentence that suggests they want feedback
+        
+        RESPONSE FORMAT:
+        Return ONLY ONE of these exact strings without explanation:
+        - "CONTINUE_FREE"
+        - "CHANGE_TOPIC" 
+        - "REQUEST_ASSESSMENT"
+        
+        EXAMPLES:
+        "I enjoyed that story. Can you tell me another one?" → CONTINUE_FREE
+        "I don't want to talk about this anymore. What else can we discuss?" → CHANGE_TOPIC
+        "Did I use the past tense correctly in my last sentence?" → REQUEST_ASSESSMENT
+        "Can we practice with flashcards now?" → CHANGE_TOPIC
+        "How's my pronunciation?" → REQUEST_ASSESSMENT
+        "What does this word mean?" → CONTINUE_FREE
         """
         
         conversation_decision_response = await self.llm.ainvoke([
             SystemMessage(content=continue_conversation_prompt)
-        ] + state["messages"])
+        ])
         
         conversation_decision = str(conversation_decision_response.content).strip()
         
         if "CHANGE_TOPIC" in conversation_decision:
             # User wants to change topics or switch to structured learning
             state["next"] = "topic_selection_prompt"
+        elif "CONTINUE_FREE" in conversation_decision:
+            # User is asking for something else
+            state["next"] = "free_conversation"
         elif "REQUEST_ASSESSMENT" in conversation_decision:
-            # User is asking for feedback, perform assessment
+            # User wants assessment on their language use
             await self._perform_free_conversation_assessment(state, last_user_message)
-            state["next"] = "assessment"
-        else:
-            # Continue free conversation - but periodically assess progress
-            conversation_length = len([msg for msg in state["messages"] if isinstance(msg, HumanMessage)])
+            state["next"] = "free_conversation"
+        # else:
+        #     # Continue free conversation - but periodically assess progress
+        #     conversation_length = state.get("counter", 0)
             
-            # Perform assessment every 5-7 user messages to track progress
-            if conversation_length % 6 == 0:  # Every 6th user message
-                await self._perform_free_conversation_assessment(state, last_user_message)
-                state["next"] = "assessment"
-            else:
-                # Continue free conversation without assessment
-                state["next"] = "free_conversation"
+        #     # Perform assessment every 5-7 user messages to track progress
+        #     if conversation_length % 6 == 0:  # Every 6th user message
+        #         await self._perform_free_conversation_assessment(state, last_user_message)
+        #         state["next"] = "free_conversation"
+        #     else:
+        #         # Continue free conversation without assessment
+        #         state["next"] = "free_conversation"
         
         return state
     
@@ -663,28 +760,22 @@ Continue the conversation naturally while being ready to help with vocabulary an
         recent_messages = state["messages"][-6:] if len(state["messages"]) >= 6 else state["messages"]
         
         assessment_prompt = f"""
-        You are assessing a language learner's free conversation performance in {language}.
+        You are assessing a language learner's conversation in {language}.
         
         Learning Goals: {learning_goals}
         
-        Evaluate the user's latest message and recent conversation performance on:
+        Evaluate the user's messages on these simplified criteria:
         
-        1. FLUENCY: How naturally and smoothly they express ideas
-        2. VOCABULARY: Range and appropriateness of vocabulary used
-        3. GRAMMAR: Accuracy of grammatical structures
-        4. ENGAGEMENT: How well they maintain and contribute to conversation
-        5. PROGRESS: Improvement compared to earlier messages in the conversation
+        1. LANGUAGE USE: How well they use vocabulary and grammar
+        2. COMMUNICATION: How effectively they express ideas and maintain conversation
+        3. PROGRESS: Any improvement shown during the conversation
         
-        Provide assessment in this format:
-        FLUENCY: [score 1-5] - [brief comment on natural expression and flow]
-        VOCABULARY: [score 1-5] - [comment on vocabulary range and usage]
-        GRAMMAR: [score 1-5] - [comment on grammatical accuracy]
-        ENGAGEMENT: [score 1-5] - [comment on conversation participation]
-        PROGRESS: [score 1-5] - [comment on improvement during this conversation]
-        OVERALL: [score 1-5] - [overall performance summary]
-        STRENGTHS: [what they're doing well]
-        AREAS_FOR_IMPROVEMENT: [specific suggestions for improvement]
-        ENCOURAGEMENT: [positive, motivating feedback]
+        Provide a brief assessment:
+        LANGUAGE USE: [score 1-5] - [brief comment on vocabulary and grammar]
+        COMMUNICATION: [score 1-5] - [comment on expression and conversation flow]
+        PROGRESS: [score 1-5] - [note any improvement]
+        OVERALL: [score 1-5] - [summary in 1-2 sentences]
+        NEXT STEPS: [1-2 specific, actionable suggestions]
         """
         
         assessment_response = await self.llm.ainvoke([
@@ -716,7 +807,8 @@ Continue the conversation naturally while being ready to help with vocabulary an
                 "active_cards": "",
                 "assessment_history": "",
                 "learning_opportunities": "",
-                "calling_node": ""
+                "calling_node": "",
+                "counter": 0
             }
         
         # Configuration for the thread
@@ -742,7 +834,7 @@ Continue the conversation naturally while being ready to help with vocabulary an
                             break
                         else:
                             current_state = cast(KotoriState, chunk[current_node])
-                            next = current_state.get("next", END)
+                            next = self._route_next(current_state)
                             if next == END:
                                 print("Learning session completed!")
                                 return
@@ -765,7 +857,7 @@ Continue the conversation naturally while being ready to help with vocabulary an
                             break
                         else:
                             current_state = cast(KotoriState, chunk[current_node])
-                            next = current_state.get("next", END)
+                            next = self._route_next(current_state)
                             if next == END:
                                 print("Learning session completed!")
                                 return
