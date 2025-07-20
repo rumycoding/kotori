@@ -38,8 +38,6 @@ class KotoriState(TypedDict):
     
     assessment_history: str
     
-    learning_opportunities: str
-    
     calling_node: str  # Track which node called the tools
     
     counter: int
@@ -331,7 +329,6 @@ class KotoriBot:
         state['active_cards'] = ''
         state['learning_goals'] = ''
         state['assessment_history'] = ''
-        state['learning_opportunities'] = ''
         state['counter'] = 0
         return state
     
@@ -787,10 +784,8 @@ Continue the conversation naturally while being ready to help with vocabulary an
         
         # Store the assessment in learning opportunities for later use
         current_assessment = f"Free Conversation Assessment - {user_message.content[:30]}...: {assessment_response.content}\n\n"
-        state["learning_opportunities"] = state.get("learning_opportunities", "") + current_assessment
+        state['assessment_history'] = state.get('assessment_history', "") + current_assessment
         
-        # Also add to assessment history for consistency with other assessment flows
-        state["assessment_history"] = state.get("assessment_history", "") + current_assessment
     
     async def run_conversation(self, initial_state: Optional[KotoriState] = None, thread_id: str = "1"):
         """
@@ -806,7 +801,6 @@ Continue the conversation naturally while being ready to help with vocabulary an
                 "next": "",
                 "active_cards": "",
                 "assessment_history": "",
-                "learning_opportunities": "",
                 "calling_node": "",
                 "counter": 0
             }
