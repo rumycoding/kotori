@@ -1,5 +1,5 @@
 @echo off
-echo Starting Kotori chatbot...
+echo Starting Kotori chatbot CLI...
 echo.
 python main.py
 pause
