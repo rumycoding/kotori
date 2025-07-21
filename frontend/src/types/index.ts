@@ -4,6 +4,7 @@ export interface Message {
   message_type: 'user' | 'ai' | 'system' | 'tool';
   timestamp: string;
   metadata?: Record<string, any>;
+  tool_calls?: ToolCall[];
 }
 
 export interface KotoriConfig {
@@ -32,7 +33,7 @@ export interface StateInfo {
   next_node?: string;
   learning_goals?: string;
   active_cards?: string;
-  assessment_history?: string;
+  assessment_history?: string[];
   counter: number;
   timestamp: string;
 }
@@ -169,7 +170,7 @@ export interface InputComponentProps {
 }
 
 export interface AssessmentPanelProps {
-  assessmentHistory?: string;
+  assessmentHistory?: string[];
   isVisible: boolean;
   onToggleVisibility: () => void;
 }
@@ -177,6 +178,7 @@ export interface AssessmentPanelProps {
 export interface DebugPanelProps {
   stateInfo?: StateInfo;
   toolCalls: ToolCall[];
+  messages?: Message[];
   stateGraph?: StateGraph;
   isVisible: boolean;
   onToggleVisibility: () => void;

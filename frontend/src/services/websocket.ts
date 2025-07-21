@@ -145,7 +145,11 @@ export class WebSocketService {
         this.emit('state_change', data.state as StateInfo);
         break;
       case 'tool_call':
+        console.log('=== WEBSOCKET TOOL_CALL EVENT ===');
+        console.log('Raw tool call data:', data);
+        console.log('Tool object:', data.tool);
         this.emit('tool_call', data.tool as ToolCall);
+        console.log('=================================');
         break;
       case 'assessment_update':
         this.emit('assessment_update', data.metrics as AssessmentMetrics);

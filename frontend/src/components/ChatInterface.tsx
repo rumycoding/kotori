@@ -50,8 +50,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [error, setError] = useState<string>('');
   const [showError, setShowError] = useState(false);
   
-  // Track which messages have already been spoken to prevent double audio
-  const spokenMessageIds = useRef<Set<string>>(new Set());
+  // Speech state tracking
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [speakingMessageId, setSpeakingMessageId] = useState<string>('');
 
   // Helper function to add message without duplicates
   const addMessageSafely = (newMessage: Message) => {
@@ -108,8 +109,19 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     // Use the improved connection management
     setConnectionStatus('connecting');
     
-    webSocketManager.ensureConnection(sessionId)
-      .then((ws) => {
+    // First verify the session exists on the backend before connecting WebSocket
+    const verifyAndConnect = async () => {
+      try {
+        // Import api service
+        const { apiService } = await import('../services/api');
+        
+        // Check if session exists on backend
+        await apiService.getSession(sessionId);
+        console.log('Session verified on backend, proceeding with WebSocket connection');
+        
+        // Now connect WebSocket
+        const ws = await webSocketManager.ensureConnection(sessionId);
+        
         // Only set up listeners if this is a new WebSocket instance for this component
         if (wsRef.current !== ws) {
           // Clean up previous listeners if we had a different WebSocket instance
@@ -142,13 +154,24 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         
         setConnectionStatus('connected');
         setError('');
-      })
-      .catch((err) => {
-        console.error('WebSocket connection failed:', err);
+      } catch (err: any) {
+        console.error('Session verification or WebSocket connection failed:', err);
+        
+        // If session not found, clear sessionStorage and trigger re-initialization
+        if (err.message && err.message.includes('404')) {
+          console.log('Session not found on backend, clearing sessionStorage and reloading');
+          sessionStorage.removeItem('kotori_session_id');
+          window.location.reload();
+          return;
+        }
+        
         setConnectionStatus('error');
         setError('Failed to connect to chat service');
         setShowError(true);
-      });
+      }
+    };
+    
+    verifyAndConnect();
 
     // Cleanup on unmount
     return () => {
@@ -169,12 +192,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const handleAIResponse = (message: Message) => {
     addMessageSafely(message);
     setIsLoading(false);
-
-    // Text-to-speech if enabled and message hasn't been spoken yet
-    if (uiSettings.voice_settings.auto_play && !spokenMessageIds.current.has(message.id)) {
-      spokenMessageIds.current.add(message.id);
-      speakText(message.content);
-    }
+    // Removed auto-play functionality - voice will only play when user clicks the voice icon
   };
 
   const handleStateChange = (stateInfo: StateInfo) => {
@@ -182,7 +200,15 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   };
 
   const handleToolCall = (toolCall: ToolCall) => {
-    setToolCalls(prev => [...prev, toolCall]);
+    console.log('=== TOOL CALL RECEIVED ===');
+    console.log('Tool call data:', toolCall);
+    console.log('Current toolCalls before update:', toolCalls);
+    setToolCalls(prev => {
+      const updated = [...prev, toolCall];
+      console.log('Updated toolCalls:', updated);
+      return updated;
+    });
+    console.log('=========================');
   };
 
 
@@ -197,10 +223,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         const exists = acc.some(msg => msg.id === message.id);
         if (!exists) {
           acc.push(message);
-          // Mark historical AI messages as already spoken to prevent auto-play on load
-          if (message.message_type === 'ai') {
-            spokenMessageIds.current.add(message.id);
-          }
+          // Removed spoken message tracking since we no longer auto-play
         }
         return acc;
       }, []);
@@ -231,7 +254,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     wsRef.current.sendMessage(messageText);
   };
 
-  const speakText = (text: string) => {
+  const speakText = (text: string, messageId: string) => {
     if ('speechSynthesis' in window) {
       // Cancel any currently speaking utterances to prevent overlap
       if (speechSynthesis.speaking) {
@@ -254,7 +277,31 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         }
       }
 
+      // Set up event handlers for speech state tracking
+      utterance.onstart = () => {
+        setIsSpeaking(true);
+        setSpeakingMessageId(messageId);
+      };
+
+      utterance.onend = () => {
+        setIsSpeaking(false);
+        setSpeakingMessageId('');
+      };
+
+      utterance.onerror = () => {
+        setIsSpeaking(false);
+        setSpeakingMessageId('');
+      };
+
       speechSynthesis.speak(utterance);
+    }
+  };
+
+  const stopSpeech = () => {
+    if ('speechSynthesis' in window && speechSynthesis.speaking) {
+      speechSynthesis.cancel();
+      setIsSpeaking(false);
+      setSpeakingMessageId('');
     }
   };
 
@@ -272,8 +319,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     try {
       setMessages([]);
       setToolCalls([]);
-      // Clear spoken message IDs when history is cleared
-      spokenMessageIds.current.clear();
+      // Removed spoken message IDs clearing since we no longer track them
     } catch (error) {
       setError('Failed to clear conversation history');
       setShowError(true);
@@ -314,8 +360,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         }}
       >
         <Grid container spacing={2} sx={{ flex: 1, minHeight: 0 }}>
-        {/* Main Chat Area */}
-        <Grid item xs={12} md={showAssessment || showDebug ? 8 : 12}>
+        {/* Main Chat Area - Now always full width since panels are floating */}
+        <Grid item xs={12}>
           <Paper 
             elevation={2} 
             sx={{ 
@@ -336,10 +382,14 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
             {/* Messages */}
             <Box sx={{ flex: 1, overflow: 'hidden' }}>
-              <MessageDisplay 
-                messages={messages} 
+              <MessageDisplay
+                messages={messages}
                 isLoading={isLoading}
                 onMessageClick={(msg) => console.log('Message clicked:', msg)}
+                onSpeakText={speakText}
+                onStopSpeech={stopSpeech}
+                isSpeaking={isSpeaking}
+                speakingMessageId={speakingMessageId}
               />
             </Box>
 
@@ -356,36 +406,24 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
           </Paper>
         </Grid>
 
-        {/* Side Panels */}
-        {(showAssessment || showDebug) && (
-          <Grid item xs={12} md={4}>
-            <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', gap: 2, overflow: 'hidden' }}>
-              {/* Assessment Panel */}
-              {showAssessment && (
-                <Box sx={{ flex: showDebug ? '1 1 50%' : '1 1 100%', minHeight: 0 }}>
-                  <AssessmentPanel
-                    assessmentHistory={currentState?.assessment_history}
-                    isVisible={showAssessment}
-                    onToggleVisibility={() => setShowAssessment(!showAssessment)}
-                  />
-                </Box>
-              )}
-
-              {/* Debug Panel */}
-              {showDebug && (
-                <Box sx={{ flex: showAssessment ? '1 1 50%' : '1 1 100%', minHeight: 0 }}>
-                  <DebugPanel
-                    stateInfo={currentState}
-                    toolCalls={toolCalls}
-                    isVisible={showDebug}
-                    onToggleVisibility={() => setShowDebug(!showDebug)}
-                  />
-                </Box>
-              )}
-            </Box>
-          </Grid>
-        )}
         </Grid>
+
+      {/* Floating Panels */}
+      {/* Assessment Panel */}
+      <AssessmentPanel
+        assessmentHistory={currentState?.assessment_history}
+        isVisible={showAssessment}
+        onToggleVisibility={() => setShowAssessment(!showAssessment)}
+      />
+
+      {/* Debug Panel */}
+      <DebugPanel
+        stateInfo={currentState}
+        toolCalls={toolCalls}
+        messages={messages}
+        isVisible={showDebug}
+        onToggleVisibility={() => setShowDebug(!showDebug)}
+      />
 
       {/* Floating Action Buttons */}
       <Box sx={{ position: 'fixed', bottom: 16, right: 16, display: 'flex', flexDirection: 'column', gap: 1 }}>

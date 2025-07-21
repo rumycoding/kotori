@@ -8,12 +8,16 @@ import {
   CircularProgress,
   List,
   ListItem,
+  IconButton,
+  Tooltip,
 } from '@mui/material';
 import {
   Person as PersonIcon,
   SmartToy as BotIcon,
   Build as ToolIcon,
   Info as InfoIcon,
+  VolumeUp as VolumeUpIcon,
+  VolumeOff as VolumeOffIcon,
 } from '@mui/icons-material';
 import ReactMarkdown from 'react-markdown';
 import { format } from 'date-fns';
@@ -24,12 +28,20 @@ interface MessageDisplayProps {
   messages: Message[];
   isLoading?: boolean;
   onMessageClick?: (message: Message) => void;
+  onSpeakText?: (text: string, messageId: string) => void;
+  onStopSpeech?: () => void;
+  isSpeaking?: boolean;
+  speakingMessageId?: string;
 }
 
-const MessageDisplay: React.FC<MessageDisplayProps> = ({ 
-  messages, 
-  isLoading = false, 
-  onMessageClick 
+const MessageDisplay: React.FC<MessageDisplayProps> = ({
+  messages,
+  isLoading = false,
+  onMessageClick,
+  onSpeakText,
+  onStopSpeech,
+  isSpeaking = false,
+  speakingMessageId
 }) => {
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
 
@@ -263,18 +275,56 @@ const MessageDisplay: React.FC<MessageDisplayProps> = ({
                     )}
                   </Box>
 
-                  {/* Timestamp */}
-                  <Typography
-                    variant="caption"
+                  {/* Timestamp and Voice Controls */}
+                  <Box
                     sx={{
-                      display: 'block',
-                      textAlign: message.message_type === 'user' ? 'right' : 'left',
-                      opacity: 0.7,
+                      display: 'flex',
+                      justifyContent: message.message_type === 'user' ? 'flex-end' : 'space-between',
+                      alignItems: 'center',
                       mt: 0.5,
                     }}
                   >
-                    {formatTimestamp(message.timestamp)}
-                  </Typography>
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        opacity: 0.7,
+                      }}
+                    >
+                      {formatTimestamp(message.timestamp)}
+                    </Typography>
+                    
+                    {/* Voice Icon for AI messages */}
+                    {message.message_type === 'ai' && onSpeakText && (
+                      <Tooltip title={isSpeaking && speakingMessageId === message.id ? "Stop speech" : "Listen to this message"}>
+                        <IconButton
+                          size="small"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (isSpeaking && speakingMessageId === message.id) {
+                              onStopSpeech?.();
+                            } else {
+                              onSpeakText(message.content, message.id);
+                            }
+                          }}
+                          sx={{
+                            ml: 1,
+                            opacity: isSpeaking && speakingMessageId === message.id ? 1 : 0.7,
+                            color: isSpeaking && speakingMessageId === message.id ? 'primary.main' : 'inherit',
+                            '&:hover': {
+                              opacity: 1,
+                              bgcolor: 'action.hover'
+                            }
+                          }}
+                        >
+                          {isSpeaking && speakingMessageId === message.id ? (
+                            <VolumeOffIcon fontSize="small" />
+                          ) : (
+                            <VolumeUpIcon fontSize="small" />
+                          )}
+                        </IconButton>
+                      </Tooltip>
+                    )}
+                  </Box>
 
                   {/* Metadata */}
                   {message.metadata && Object.keys(message.metadata).length > 0 && (

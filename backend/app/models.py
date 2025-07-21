@@ -5,9 +5,16 @@ from enum import Enum
 
 class MessageType(str, Enum):
     USER = "user"
-    AI = "ai" 
+    AI = "ai"
     SYSTEM = "system"
     TOOL = "tool"
+
+class ToolCall(BaseModel):
+    tool_name: str
+    parameters: Dict[str, Any]
+    status: str = Field(default="pending", description="Status: pending, success, or error")
+    result: Optional[str] = None
+    timestamp: datetime = Field(default_factory=datetime.now)
 
 class Message(BaseModel):
     id: str
@@ -15,6 +22,7 @@ class Message(BaseModel):
     message_type: MessageType
     timestamp: datetime = Field(default_factory=datetime.now)
     metadata: Optional[Dict[str, Any]] = None
+    tool_calls: Optional[List[ToolCall]] = None
 
 class ChatMessage(BaseModel):
     message: str
@@ -43,16 +51,10 @@ class StateInfo(BaseModel):
     next_node: Optional[str] = None
     learning_goals: Optional[str] = None
     active_cards: Optional[str] = None
-    assessment_history: Optional[str] = None
+    assessment_history: Optional[List[str]] = None
     counter: int = 0
     timestamp: datetime = Field(default_factory=datetime.now)
 
-class ToolCall(BaseModel):
-    tool_name: str
-    parameters: Dict[str, Any]
-    status: str  # "pending", "success", "error"
-    result: Optional[str] = None
-    timestamp: datetime = Field(default_factory=datetime.now)
 
 class WebSocketEvent(BaseModel):
     event_type: str

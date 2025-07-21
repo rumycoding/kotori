@@ -142,17 +142,19 @@ class WebSocketConnectionManager:
         self.session_adapters[session_id] = adapter
         
         # Register callbacks for real-time updates
-        adapter.register_callback("ai_response", 
+        adapter.register_callback("ai_response",
             lambda msg: self._handle_ai_response(session_id, msg))
-        adapter.register_callback("user_message", 
+        adapter.register_callback("user_message",
             lambda msg: self._handle_user_message(session_id, msg))
-        adapter.register_callback("state_change", 
+        adapter.register_callback("state_change",
             lambda state: self._handle_state_change(session_id, state))
-        adapter.register_callback("tool_call", 
+        adapter.register_callback("tool_call",
             lambda tool: self._handle_tool_call(session_id, tool))
-        adapter.register_callback("assessment_update", 
+        adapter.register_callback("tool_message",
+            lambda msg: self._handle_tool_message(session_id, msg))
+        adapter.register_callback("assessment_update",
             lambda metrics: self._handle_assessment_update(session_id, metrics))
-        adapter.register_callback("conversation_end", 
+        adapter.register_callback("conversation_end",
             lambda data: self._handle_conversation_end(session_id, data))
         adapter.register_callback("error",
             lambda error: self._handle_error(session_id, error))
@@ -201,11 +203,36 @@ class WebSocketConnectionManager:
     
     async def _handle_tool_call(self, session_id: str, tool_call: ToolCall):
         """Handle tool calls from KotoriBot."""
+        print(f"=== WEBSOCKET HANDLING TOOL CALL ===")
+        print(f"Session ID: {session_id}")
+        print(f"Tool call object: {tool_call}")
+        print(f"Tool call model_dump: {tool_call.model_dump()}")
+        
         # Send to frontend
         await self.send_event(session_id, "tool_call", {
             "tool": tool_call.model_dump(),
             "session_id": session_id
         })
+        print(f"Tool call event sent to frontend")
+        print(f"===================================")
+    
+    async def _handle_tool_message(self, session_id: str, message: Message):
+        """Handle tool messages from KotoriBot."""
+        print(f"=== WEBSOCKET HANDLING TOOL MESSAGE ===")
+        print(f"Session ID: {session_id}")
+        print(f"Tool message: {message}")
+        print(f"Tool calls in message: {message.tool_calls}")
+        
+        # Add to conversation history
+        await conversation_manager.add_message(session_id, message)
+        
+        # Send to frontend as a regular message
+        await self.send_event(session_id, "ai_response", {
+            "message": message.model_dump(),
+            "session_id": session_id
+        })
+        print(f"Tool message sent to frontend")
+        print(f"=====================================")
     
     async def _handle_assessment_update(self, session_id: str, metrics: AssessmentMetrics):
         """Handle assessment updates."""
@@ -255,7 +282,8 @@ class WebSocketConnectionManager:
                 id=str(uuid.uuid4()),
                 content=message,
                 message_type=MessageType.USER,
-                timestamp=datetime.now()
+                timestamp=datetime.now(),
+                tool_calls=None
             )
             
             # Send to KotoriBot

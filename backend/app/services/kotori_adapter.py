@@ -61,7 +61,7 @@ class KotoriBotAdapter:
                 "learning_goals": "",
                 "next": "",
                 "active_cards": "",
-                "assessment_history": "",
+                "assessment_history": [],
                 "calling_node": "",
                 "counter": 0
             }
@@ -338,7 +338,8 @@ class KotoriBotAdapter:
                     id=str(uuid.uuid4()),
                     content=interrupt_value,
                     message_type=MessageType.AI,
-                    timestamp=datetime.now()
+                    timestamp=datetime.now(),
+                    tool_calls=None  # Tool calls will be populated separately if needed
                 )
                 
                 # Notify about AI response
@@ -357,7 +358,7 @@ class KotoriBotAdapter:
             next_node=state.get("next"),
             learning_goals=state.get("learning_goals", ""),
             active_cards=state.get("active_cards", ""),
-            assessment_history=state.get("assessment_history", ""),
+            assessment_history=state.get("assessment_history", []),
             counter=state.get("counter", 0)
         )
         
@@ -366,22 +367,110 @@ class KotoriBotAdapter:
             await self.state_callbacks["state_change"](state_info)
         
         # Handle tool calls if present
-        if hasattr(state, 'messages') and state['messages']:
+        print(f"=== CHECKING FOR TOOL CALLS IN STATE ===")
+        print(f"State keys: {list(state.keys()) if hasattr(state, 'keys') else 'No keys method'}")
+        print(f"State type: {type(state)}")
+        print(f"Messages key exists: {'messages' in state}")
+        
+        extracted_tool_calls = []
+        
+        if 'messages' in state and state['messages']:
+            print(f"Number of messages: {len(state['messages'])}")
             last_message = state['messages'][-1]
-            if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
-                for tool_call in last_message.tool_calls:
+            print(f"Last message type: {type(last_message)}")
+            print(f"Last message content: {getattr(last_message, 'content', 'No content')[:100]}...")
+            
+            # Check if this is a ToolMessage (result of tool execution)
+            from langchain_core.messages import ToolMessage
+            if isinstance(last_message, ToolMessage):
+                print(f"Found ToolMessage with result!")
+                print(f"Tool name: {getattr(last_message, 'name', 'unknown')}")
+                print(f"Tool call ID: {getattr(last_message, 'tool_call_id', 'unknown')}")
+                print(f"Tool result content: {last_message.content[:200]}...")
+                
+                # Create a completed tool call
+                tool_info = ToolCall(
+                    tool_name=getattr(last_message, 'name', 'unknown_tool'),
+                    parameters={},  # ToolMessage doesn't contain original parameters
+                    status="success",
+                    result=str(last_message.content) if last_message.content else None
+                )
+                print(f"Created completed tool info: {tool_info}")
+                extracted_tool_calls.append(tool_info)
+                
+                if "tool_call" in self.tool_callbacks:
+                    print(f"Calling tool_call callback for completed tool")
+                    await self.tool_callbacks["tool_call"](tool_info)
+                else:
+                    print(f"No tool_call callback registered")
+            
+            # Also check for tool_calls attribute (pending tool calls) - but not on ToolMessage
+            elif hasattr(last_message, 'tool_calls') and last_message.tool_calls:
+                print(f"Tool calls: {last_message.tool_calls}")
+                print(f"Found {len(last_message.tool_calls)} pending tool calls")
+                for i, tool_call in enumerate(last_message.tool_calls):
+                    print(f"Tool call {i}: {tool_call}")
+                    
+                    # Handle different tool call formats
+                    if hasattr(tool_call, 'name'):
+                        tool_name = tool_call.name
+                        parameters = getattr(tool_call, 'args', {})
+                    elif isinstance(tool_call, dict):
+                        tool_name = tool_call.get('name', 'unknown')
+                        parameters = tool_call.get('args', {})
+                    else:
+                        tool_name = str(tool_call)
+                        parameters = {}
+                    
                     tool_info = ToolCall(
-                        tool_name=tool_call.get('name', 'unknown'),
-                        parameters=tool_call.get('args', {}),
+                        tool_name=tool_name,
+                        parameters=parameters,
                         status="pending"
                     )
+                    print(f"Created pending tool info: {tool_info}")
+                    extracted_tool_calls.append(tool_info)
                     
                     if "tool_call" in self.tool_callbacks:
+                        print(f"Calling tool_call callback for pending tool")
                         await self.tool_callbacks["tool_call"](tool_info)
+                    else:
+                        print(f"No tool_call callback registered")
+            else:
+                print(f"No tool_calls attribute or empty tool calls on last message")
+        else:
+            print(f"No messages in state or messages list is empty")
+            print(f"State messages value: {state.get('messages', 'KEY_NOT_FOUND')}")
+        
+        # If we found tool calls, create a tool message to send to frontend
+        if extracted_tool_calls:
+            print(f"Creating tool message with {len(extracted_tool_calls)} tool calls")
+            tool_message = Message(
+                id=str(uuid.uuid4()),
+                content=f"Tool calls processed: {', '.join([f'{tc.tool_name} ({tc.status})' for tc in extracted_tool_calls])}",
+                message_type=MessageType.TOOL,
+                timestamp=datetime.now(),
+                tool_calls=extracted_tool_calls,
+                metadata={
+                    "tool_count": len(extracted_tool_calls),
+                    "tool_names": [tc.tool_name for tc in extracted_tool_calls],
+                    "completed_count": len([tc for tc in extracted_tool_calls if tc.status == "success"]),
+                    "pending_count": len([tc for tc in extracted_tool_calls if tc.status == "pending"])
+                }
+            )
+            
+            # Notify about tool message
+            if "tool_message" in self.state_callbacks:
+                await self.state_callbacks["tool_message"](tool_message)
+        
+        print(f"========================================")
         
         # Extract assessment information if present
         if node_name == "assessment" and state.get("assessment_history"):
-            await self._extract_assessment_metrics(state.get("assessment_history", ""))
+            assessment_history = state.get("assessment_history", [])
+            if assessment_history and isinstance(assessment_history, list):
+                # Extract metrics from the latest assessment entry
+                latest_assessment = assessment_history[-1] if assessment_history else ""
+                await self._extract_assessment_metrics(latest_assessment)
     
     async def _extract_assessment_metrics(self, assessment_text: str):
         """Extract assessment metrics from assessment text."""
@@ -442,7 +531,8 @@ class KotoriBotAdapter:
             id=str(uuid.uuid4()),
             content=message,
             message_type=MessageType.USER,
-            timestamp=datetime.now()
+            timestamp=datetime.now(),
+            tool_calls=None
         )
         
         # Notify about user message
@@ -471,7 +561,7 @@ class KotoriBotAdapter:
             current_node="unknown",  # We'd need to track this better
             learning_goals=self.current_state.get("learning_goals", ""),
             active_cards=self.current_state.get("active_cards", ""),
-            assessment_history=self.current_state.get("assessment_history", ""),
+            assessment_history=self.current_state.get("assessment_history", []),
             counter=self.current_state.get("counter", 0)
         )
     
