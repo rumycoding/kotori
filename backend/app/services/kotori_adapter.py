@@ -22,7 +22,8 @@ class KotoriBotAdapter:
         # Convert our config format to the original format
         original_config: OriginalKotoriConfig = {
             "language": config.get("language", "english"),
-            "deck_name": config.get("deck_name", "Kotori")
+            "deck_name": config.get("deck_name", "Kotori"),
+            "temperature": config.get("temperature", 0.7),
         }
         
         self.kotori_bot = KotoriBot(llm, original_config)
@@ -192,12 +193,10 @@ class KotoriBotAdapter:
                                                 return
                                     
                                     # Reset resume flag after processing
-                                    resume = False
                                 finally:
                                     processing_stream = False
                             else:
                                 print("Stream processing already in progress, skipping duplicate resume")
-                                resume = False
                         except asyncio.TimeoutError:
                             print("Session timeout")
                             self.conversation_active = False
@@ -207,7 +206,6 @@ class KotoriBotAdapter:
                             print(f"Error in conversation resume: {e}")
                             await self._notify_error(f"Conversation resume error: {str(e)}")
                             processing_stream = False
-                            resume = False
                             continue
                             
                 except Exception as e:
@@ -241,92 +239,6 @@ class KotoriBotAdapter:
                 if self.waiting_for_input:
                     print(f"Already waiting for input, ignoring duplicate interrupt")
                     return
-                
-                # Check timing to prevent rapid-fire duplicates
-                import time
-                import re
-                import hashlib
-                import difflib
-                
-                current_time = time.time()
-                if (self.last_interrupt_time is not None and
-                    current_time - self.last_interrupt_time < self.interrupt_cooldown):
-                    print(f"TIMING: Interrupt too soon after last one ({current_time - self.last_interrupt_time:.2f}s), skipping")
-                    self.waiting_for_input = True
-                    return
-                
-                # Check if content is very similar to the last interrupt
-                if self.last_interrupt_content is not None:
-                    similarity = difflib.SequenceMatcher(None, self.last_interrupt_content, original_content).ratio()
-                    if similarity > 0.80:  # Lowered threshold to 80%
-                        print(f"SIMILARITY: Content too similar to last interrupt ({similarity:.2%}), skipping: {original_content[:50]}...")
-                        self.waiting_for_input = True
-                        return
-                
-                # Create multiple normalized versions for comparison
-                # Version 1: Basic normalization
-                normalized_v1 = re.sub(r'\s+', ' ', original_content.strip().lower())
-                
-                # Version 2: Remove punctuation
-                normalized_v2 = re.sub(r'[^\w\s]', ' ', normalized_v1)
-                normalized_v2 = re.sub(r'\s+', ' ', normalized_v2).strip()
-                
-                # Version 3: Keep only alphanumeric and basic words
-                words = re.findall(r'\b[a-zA-Z]+\b', original_content.lower())
-                normalized_v3 = ' '.join(sorted(set(words)))  # Sort and dedupe words
-                
-                # Create hashes for all versions
-                hash_v1 = hashlib.md5(normalized_v1.encode()).hexdigest()
-                hash_v2 = hashlib.md5(normalized_v2.encode()).hexdigest()
-                hash_v3 = hashlib.md5(normalized_v3.encode()).hexdigest()
-                
-                print(f"Normalized versions:")
-                print(f"  v1: {normalized_v1}")
-                print(f"  v2: {normalized_v2}")
-                print(f"  v3: {normalized_v3}")
-                
-                # Check against all stored content and hashes
-                all_checks = [
-                    normalized_v1, normalized_v2, normalized_v3,
-                    hash_v1, hash_v2, hash_v3
-                ]
-                
-                for i, check in enumerate(all_checks):
-                    if check in self.sent_message_contents or check in self.sent_message_hashes:
-                        print(f"CONTENT: Duplicate detected via check[{i}] = {check[:20]}..., skipping: {original_content[:50]}...")
-                        self.waiting_for_input = True
-                        return
-                
-                # Additional check: if content contains same key phrases
-                key_phrases = re.findall(r'\b\w{4,}\b', original_content.lower())
-                if len(key_phrases) >= 3:
-                    phrase_signature = '|'.join(sorted(key_phrases[:3]))
-                    if phrase_signature in self.sent_message_contents:
-                        print(f"PHRASE: Duplicate key phrases detected: {phrase_signature}, skipping")
-                        self.waiting_for_input = True
-                        return
-                    self.sent_message_contents.add(phrase_signature)
-                
-                print(f"All checks passed - processing interrupt")
-                
-                # Update timing and content tracking
-                self.last_interrupt_time = current_time
-                self.last_interrupt_content = original_content
-                
-                # Store all versions for future comparison
-                for check in all_checks:
-                    if len(check) > 0:
-                        if check.startswith(('a', 'b', 'c', 'd', 'e', 'f')) and len(check) == 32:  # Hash
-                            self.sent_message_hashes.add(check)
-                        else:  # Content
-                            self.sent_message_contents.add(check)
-                
-                # Limit tracking sets to prevent memory issues
-                if len(self.sent_message_contents) > 100:
-                    # Keep only the most recent 50 items
-                    self.sent_message_contents = set(list(self.sent_message_contents)[-50:])
-                if len(self.sent_message_hashes) > 100:
-                    self.sent_message_hashes = set(list(self.sent_message_hashes)[-50:])
                 
                 # Set waiting_for_input BEFORE sending message to prevent race conditions
                 self.waiting_for_input = True
