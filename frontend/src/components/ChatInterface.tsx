@@ -64,24 +64,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         return prev;
       }
       
-      // Additional check for very similar content to catch race conditions
-      const normalizedNewContent = newMessage.content.trim().toLowerCase().replace(/[^\w\s]/g, '');
-      const existsByContent = prev.some(msg => {
-        if (msg.message_type !== newMessage.message_type) return false;
-        const normalizedExistingContent = msg.content.trim().toLowerCase().replace(/[^\w\s]/g, '');
-        
-        // Check if contents are very similar (allowing for minor variations)
-        return normalizedExistingContent === normalizedNewContent ||
-               (normalizedExistingContent.length > 10 && normalizedNewContent.length > 10 &&
-                (normalizedExistingContent.includes(normalizedNewContent) ||
-                 normalizedNewContent.includes(normalizedExistingContent)));
-      });
-      
-      if (existsByContent) {
-        console.log(`Message with similar content already exists, skipping duplicate: ${newMessage.content.substring(0, 50)}...`);
-        return prev;
-      }
-      
       return [...prev, newMessage];
     });
   };
