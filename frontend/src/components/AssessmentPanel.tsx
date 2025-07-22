@@ -195,9 +195,9 @@ const AssessmentPanel: React.FC<AssessmentPanelProps> = ({
     return elements;
   };
 
-  const formatTimestamp = (index: number) => {
+  const formatTimestamp = (originalIndex: number) => {
     const now = new Date();
-    const assessmentTime = new Date(now.getTime() - (assessmentHistory!.length - 1 - index) * 60000);
+    const assessmentTime = new Date(now.getTime() - (assessmentHistory!.length - 1 - originalIndex) * 60000);
     return assessmentTime.toLocaleTimeString();
   };
 
@@ -399,12 +399,13 @@ const AssessmentPanel: React.FC<AssessmentPanelProps> = ({
       <Box sx={{ flex: 1, overflow: 'auto', p: 1 }}>
         {assessmentHistory && assessmentHistory.length > 0 ? (
           <Box sx={{ display: 'flex', flexDirection: 'column' }}>
-            {assessmentHistory.map((assessment, index) => {
-              const isLatest = index === assessmentHistory.length - 1;
+            {[...assessmentHistory].reverse().map((assessment, index) => {
+              const originalIndex = assessmentHistory.length - 1 - index;
+              const isLatest = index === 0; // First item in reversed array is the latest
               
               return (
                 <Accordion
-                  key={index}
+                  key={originalIndex}
                   defaultExpanded={isLatest}
                   sx={{
                     mb: 1,
@@ -434,10 +435,10 @@ const AssessmentPanel: React.FC<AssessmentPanelProps> = ({
                   >
                     <Box sx={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
                       <Typography variant="subtitle2" sx={{ fontWeight: 'bold' }}>
-                        {isLatest ? '🔥 Latest Assessment' : `Assessment #${index + 1}`}
+                        {isLatest ? '🔥 Latest Assessment' : `Assessment #${originalIndex + 1}`}
                       </Typography>
                       <Typography variant="caption" sx={{ opacity: 0.8 }}>
-                        {formatTimestamp(index)}
+                        {formatTimestamp(originalIndex)}
                       </Typography>
                     </Box>
                   </AccordionSummary>
