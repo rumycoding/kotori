@@ -53,7 +53,7 @@ REM Start backend
 echo [INFO] Starting Kotori Bot Backend...
 echo.
 cd backend
-start "Kotori Backend" cmd /k "DEBUG_MODE=true python run_backend.py"
+start "Kotori Backend" cmd /k "python run_backend.py"
 
 REM Wait a moment for backend to start
 timeout /t 3 /nobreak >nul

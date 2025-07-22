@@ -91,7 +91,8 @@ async def main():
     print("Welcome to your ReAct Anki Agent! Type 'exit' to quit.")
     config: KotoriConfig = {
         "language": "english",
-        "deck_name": "Kotori"
+        "deck_name": "Kotori",
+        "temperature": 0.1  # Default temperature for LLM responses
     }
     
     bot = KotoriBot(model, config)

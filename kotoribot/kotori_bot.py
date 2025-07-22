@@ -46,6 +46,7 @@ class KotoriState(TypedDict):
 class KotoriConfig(TypedDict):
     language: str # possible values: "english" and "japanese"
     deck_name: Optional[str] # Name of the Anki deck to use
+    temperature: Optional[float]  # Temperature for LLM responses, default is 0.1
     
     
 class KotoriBot:
@@ -54,8 +55,9 @@ class KotoriBot:
         # Initialize the state graph with the defined state schema
         self.graph = StateGraph(state_schema=KotoriState)
         
+        # Apply temperature configuration to the LLM
         self.llm = llm
-        self.config = config
+        self.set_config(config)
         
         # Define tools for Anki operations
         self.tools = [
@@ -190,6 +192,54 @@ class KotoriBot:
             # Fallback to topic_selection if invalid calling node
             return "topic_selection_prompt"
     
+    def _get_temperature(self) -> float:
+        """Return the temperature for LLM responses."""
+        temperature = self.config.get('temperature', 0.1)
+        if temperature is None:
+            return 0.1  # Default temperature if not set
+        
+        return temperature
+    
+    def _get_configured_llm(self):
+        """Return the LLM with temperature configuration applied."""
+        # Use bind to set temperature - this is the recommended approach for most LLMs
+        try:
+            return self.llm.bind(temperature=self._get_temperature())
+        except Exception as e:
+            print(f"Warning: Could not configure temperature: {e}")
+            # If temperature configuration is not supported, return the original LLM
+            return self.llm
+    
+    def set_temperature(self, temperature: float):
+        """Update the temperature configuration."""
+        if temperature < 0 or temperature > 2:
+            raise ValueError("Temperature must be between 0 and 2")
+        self.config['temperature'] = temperature
+    
+    def get_current_temperature(self) -> float:
+        """Get the current temperature setting."""
+        return self._get_temperature()
+
+    def set_config(self, config:KotoriConfig):
+        """Update the configuration for the bot."""
+        if not isinstance(config, dict):
+            raise ValueError("Config must be a dictionary")
+        
+        # Validate required fields
+        if 'language' not in config or config['language'] not in ['english', 'japanese']:
+            raise ValueError("Language must be 'english' or 'japanese'")
+        
+        if 'deck_name' in config and not isinstance(config['deck_name'], str):
+            raise ValueError("Deck name must be a string")
+        
+        if 'temperature' in config:
+            if not isinstance(config['temperature'], (float, int)):
+                raise ValueError("Temperature must be a number")
+            if config['temperature'] < 0 or config['temperature'] > 2:
+                raise ValueError("Temperature must be between 0 and 2")
+        
+        self.config = config
+    
     # Node implementations
     async def _greeting_node(self, state: KotoriState) -> KotoriState:
         """Handle initial greeting and goal setting."""
@@ -243,7 +293,8 @@ class KotoriBot:
         
         user_messages_history = state["messages"]
         
-        topic_msg = await self.llm.ainvoke([
+        configured_llm = self._get_configured_llm()
+        topic_msg = await configured_llm.ainvoke([
             SystemMessage(content=system_prompt)
         ]+ user_messages_history)
         
@@ -285,7 +336,7 @@ class KotoriBot:
         - "I'm not sure" -> NO_TOPIC
         """
         
-        topic_response = self.llm.invoke([
+        topic_response = self._get_configured_llm().invoke([
             SystemMessage(content=system_prompt),
             HumanMessage(content=last_human_message.content)
         ])
@@ -361,7 +412,8 @@ class KotoriBot:
         
         prompt = [system_message] + state["messages"]
         
-        llm_with_tools = self.llm.bind_tools([add_anki_note, check_anki_connection])
+        # Bind tools and temperature together
+        llm_with_tools = self.llm.bind_tools([add_anki_note, check_anki_connection], temperature=self._get_temperature())
         
         response = await llm_with_tools.ainvoke([
             system_message]+ state["messages"])
@@ -452,7 +504,7 @@ class KotoriBot:
         "I tried to [active_card_grammar_pattern] yesterday" → REQUIRE_ASSESSMENT
         """
         
-        topic_decision_response = await self.llm.ainvoke([
+        topic_decision_response = await self._get_configured_llm().ainvoke([
             SystemMessage(content=continue_topic_prompt)
         ] + state["messages"])
         
@@ -505,7 +557,7 @@ class KotoriBot:
             
             recent_messages = state["messages"][-6:] if len(state["messages"]) >= 6 else state["messages"]
             
-            assessment_response = await self.llm.ainvoke([
+            assessment_response = await self._get_configured_llm().ainvoke([
                 SystemMessage(content=assessment_prompt)
             ] + recent_messages)
             
@@ -547,7 +599,7 @@ class KotoriBot:
         Use answer_card or answer_multiple_cards to mark cards as answered
         """
         
-        llm_with_tools = self.llm.bind_tools([answer_card, answer_multiple_cards, check_anki_connection])
+        llm_with_tools = self.llm.bind_tools([answer_card, answer_multiple_cards, check_anki_connection], temperature=self._get_temperature())
         
         response = await llm_with_tools.ainvoke([
             SystemMessage(content=system_prompt)]+ state["messages"])
@@ -625,8 +677,8 @@ Continue the conversation naturally while being ready to help with vocabulary an
         # Use the full conversation history for context
         messages = [SystemMessage(content=system_prompt)] + state["messages"]
         
-        # Bind the add_anki_note tool to the LLM
-        llm_with_tools = self.llm.bind_tools([add_anki_note, check_anki_connection])
+        # Bind the add_anki_note tool to the LLM with temperature
+        llm_with_tools = self.llm.bind_tools([add_anki_note, check_anki_connection], temperature=self._get_temperature())
         
         # Generate response with tool access
         response = await llm_with_tools.ainvoke(messages)
@@ -720,7 +772,7 @@ Continue the conversation naturally while being ready to help with vocabulary an
         "What does this word mean?" → CONTINUE_FREE
         """
         
-        conversation_decision_response = await self.llm.ainvoke([
+        conversation_decision_response = await self._get_configured_llm().ainvoke([
             SystemMessage(content=continue_conversation_prompt)
         ])
         
@@ -777,7 +829,7 @@ Continue the conversation naturally while being ready to help with vocabulary an
         NEXT STEPS: [1-2 specific, actionable suggestions]
         """
         
-        assessment_response = await self.llm.ainvoke([
+        assessment_response = await self._get_configured_llm().ainvoke([
             SystemMessage(content=assessment_prompt)
         ] + recent_messages)
         

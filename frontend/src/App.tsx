@@ -14,6 +14,56 @@ import { KotoriConfig, UISettings, VoiceSettings } from './types';
 import { apiUtils } from './services/api';
 import ChatInterface from './components/ChatInterface';
 
+// Helper function to convert relative path to absolute path
+const getAbsolutePath = (relativePath: string): string => {
+  // In a browser environment, we need to resolve relative to the current domain
+  if (relativePath.startsWith('./')) {
+    // Remove the './' and prepend the base URL
+    return `${window.location.origin}/${relativePath.slice(2)}`;
+  } else if (relativePath.startsWith('/')) {
+    // Already absolute from root
+    return `${window.location.origin}${relativePath}`;
+  } else {
+    // Treat as relative to current directory
+    return `${window.location.origin}/${relativePath}`;
+  }
+};
+
+// Function to load config from file
+const loadConfigFromFile = async (): Promise<KotoriConfig> => {
+  try {
+    // Get the config path from environment variables
+    const configPath = process.env.REACT_APP_KOTORI_CONFIG_PATH || './kotori_config.json';
+    const absolutePath = getAbsolutePath(configPath);
+    
+    console.log('Loading config from:', absolutePath);
+    
+    const response = await fetch(absolutePath);
+    if (!response.ok) {
+      throw new Error(`Failed to load config: ${response.status} ${response.statusText}`);
+    }
+    
+    const configData = await response.json();
+    
+    // Extract the config object from the file structure
+    if (configData.config) {
+      return configData.config as KotoriConfig;
+    } else {
+      // If the file doesn't have the nested structure, assume it's the config directly
+      return configData as KotoriConfig;
+    }
+  } catch (error) {
+    console.warn('Failed to load config from file:', error);
+    console.log('Falling back to default config');
+    
+    // Return default config if loading fails
+    return {
+      language: 'english',
+      deck_name: 'Kotori',
+    };
+  }
+};
+
 // Create theme
 const createAppTheme = (mode: 'light' | 'dark') => createTheme({
   palette: {
@@ -107,6 +157,11 @@ const App: React.FC = () => {
       setIsLoading(true);
       setError('');
 
+      // Load config from file first
+      console.log('Loading config from file...');
+      const fileConfig = await loadConfigFromFile();
+      setConfig(fileConfig);
+
       // Check if we already have a valid session from previous initialization
       const existingSessionId = sessionStorage.getItem('kotori_session_id');
       if (existingSessionId && existingSessionId.trim() !== '' && sessionIdRef.current === '') {
@@ -114,7 +169,7 @@ const App: React.FC = () => {
         sessionIdRef.current = existingSessionId;
         setSessionId(existingSessionId);
         
-        // Load saved settings from localStorage
+        // Load saved settings from localStorage (will override file config if present)
         loadSavedSettings();
         
         // Check system health
@@ -137,9 +192,9 @@ const App: React.FC = () => {
       const health = await apiUtils.checkSystemHealth();
       setSystemHealth(health);
 
-      // Create new session only if we don't have one
-      console.log('Creating new session...');
-      const newSessionId = await apiUtils.createNewSession(config);
+      // Create new session only if we don't have one, using the loaded config
+      console.log('Creating new session with config:', fileConfig);
+      const newSessionId = await apiUtils.createNewSession(fileConfig);
       
       if (!newSessionId || newSessionId.trim() === '') {
         throw new Error('Failed to create session - invalid session ID received');
@@ -152,7 +207,7 @@ const App: React.FC = () => {
       // Store session ID to prevent recreation on re-renders
       sessionStorage.setItem('kotori_session_id', newSessionId);
 
-      // Load saved settings from localStorage
+      // Load saved settings from localStorage (will override file config if present)
       loadSavedSettings();
 
       console.log('App initialization completed successfully');
@@ -167,18 +222,18 @@ const App: React.FC = () => {
 
   const loadSavedSettings = () => {
     try {
-      // Load config from localStorage
+      // Load config from localStorage and merge with current config (from file)
       const savedConfig = localStorage.getItem('kotori_config');
       if (savedConfig) {
         const parsedConfig = JSON.parse(savedConfig);
-        setConfig({ ...config, ...parsedConfig });
+        setConfig(currentConfig => ({ ...currentConfig, ...parsedConfig }));
       }
 
       // Load UI settings from localStorage
       const savedUISettings = localStorage.getItem('kotori_ui_settings');
       if (savedUISettings) {
         const parsedSettings = JSON.parse(savedUISettings);
-        setUISettings({ ...uiSettings, ...parsedSettings });
+        setUISettings(currentSettings => ({ ...currentSettings, ...parsedSettings }));
       }
     } catch (err) {
       console.warn('Failed to load saved settings:', err);
