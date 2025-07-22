@@ -267,6 +267,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
       utterance.rate = uiSettings.voice_settings.rate;
       utterance.pitch = uiSettings.voice_settings.pitch;
       utterance.volume = uiSettings.voice_settings.volume;
+      utterance.lang = config.language === 'japanese' ? 'ja-JP' : 'en-US';
       
       // Set voice if specified
       if (uiSettings.voice_settings.voice_name) {
@@ -401,6 +402,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 placeholder={config.language === 'japanese' ? 'メッセージを入力...' : 'Type your message...'}
                 voiceEnabled={true}
                 voiceSettings={uiSettings.voice_settings}
+                config={config}
               />
             </Box>
           </Paper>

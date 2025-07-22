@@ -15,7 +15,7 @@ import {
   VolumeUp as SpeakerIcon,
 } from '@mui/icons-material';
 
-import { VoiceSettings } from '../types';
+import { VoiceSettings, KotoriConfig } from '../types';
 
 interface InputComponentProps {
   onSendMessage: (message: string) => void;
@@ -23,6 +23,7 @@ interface InputComponentProps {
   placeholder?: string;
   voiceEnabled?: boolean;
   voiceSettings?: VoiceSettings;
+  config?: KotoriConfig;
 }
 
 const InputComponent: React.FC<InputComponentProps> = ({
@@ -31,6 +32,7 @@ const InputComponent: React.FC<InputComponentProps> = ({
   placeholder = 'Type your message...',
   voiceEnabled = false,
   voiceSettings,
+  config,
 }) => {
   const [message, setMessage] = useState('');
   const [isListening, setIsListening] = useState(false);
@@ -64,7 +66,7 @@ const InputComponent: React.FC<InputComponentProps> = ({
       
       recognitionRef.current.continuous = false;
       recognitionRef.current.interimResults = true;
-      recognitionRef.current.lang = 'en-US'; // This could be dynamic based on settings
+      recognitionRef.current.lang = config?.language === 'japanese' ? 'ja-JP' : 'en-US';
 
       recognitionRef.current.onstart = () => {
         setIsListening(true);

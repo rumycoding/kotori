@@ -167,6 +167,7 @@ export interface InputComponentProps {
   placeholder?: string;
   voiceEnabled?: boolean;
   voiceSettings?: VoiceSettings;
+  config?: KotoriConfig;
 }
 
 export interface AssessmentPanelProps {

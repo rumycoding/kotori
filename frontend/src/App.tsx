@@ -96,7 +96,7 @@ const App: React.FC = () => {
       rate: 1.0,
       pitch: 1.0,
       volume: 1.0,
-      auto_play: true,
+      auto_play: false,
     },
   });
 
