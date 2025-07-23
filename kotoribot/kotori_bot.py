@@ -45,7 +45,7 @@ class KotoriState(TypedDict):
     
 class KotoriConfig(TypedDict):
     language: str # possible values: "english" and "japanese"
-    deck_name: Optional[str] # Name of the Anki deck to use
+    deck_name: Optional[str] # Name of the Anki deck to read, Kotori will always add cards to 'Kotori' deck
     temperature: Optional[float]  # Temperature for LLM responses, default is 0.1
     
     
@@ -393,9 +393,7 @@ Examples:
         """Handle structured conversation with learning cards."""
         # Generate assistant message for conversation
         active_cards = state.get("active_cards", "general topics")
-        goals = state.get('learning_goals', 'general practice')
         language = self.config.get('language', 'english')
-        deck = self.config.get('deck_name', 'Kotori')  # Default deck name
         learning_goal = state.get('learning_goals', 'general conversation')
         
         state["calling_node"] = "conversation"  # Track which node called the tools
@@ -633,7 +631,6 @@ GOAL: Provide focused, deep practice of the single vocabulary item for true mast
         """Handle free-form conversation with tool access for adding Anki notes."""
         goals = state.get('learning_goals', 'general chat')
         language = self.config.get('language', 'english')
-        deck_name = self.config.get('deck_name', 'Kotori')
         
         # Set the calling node for proper routing after tools
         state["calling_node"] = "free_conversation"
@@ -644,7 +641,6 @@ GOAL: Provide focused, deep practice of the single vocabulary item for true mast
 CURRENT CONTEXT:
 - Target language: {language}
 - User's learning goals: {goals}
-- Available Anki deck: {deck_name}
 
 YOUR ROLE AND INSTRUCTIONS:
 1. **Natural Conversation**: Engage in natural, flowing conversation that helps the user practice {language}
@@ -660,7 +656,6 @@ YOUR ROLE AND INSTRUCTIONS:
      * Use the add_anki_note tool to create a flashcard
      * Front: The word/phrase in {language} (keep it concise)
      * Back: Clear explanation with translation and example usage
-     * Always use deck_name: "{deck_name}"
    - Good candidates for Anki notes:
      * New vocabulary the user asks about
      * Words they misspell or misuse
