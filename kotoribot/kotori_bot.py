@@ -93,6 +93,7 @@ class KotoriBot:
         self.graph.add_node("free_conversation", self._free_conversation_node)
         
         # Internal processing nodes (no user input needed)
+        self.graph.add_node("retrieve_cards", self._retrieve_cards_node)
         self.graph.add_node("assessment", self._assessment_node)
         self.graph.add_node("topic_selection", self._topic_selection_node)
         self.graph.add_node("free_conversation_eval", self._free_conversation_eval_node)
@@ -121,6 +122,12 @@ class KotoriBot:
         
         self.graph.add_conditional_edges(
             "topic_selection",
+            self._route_next,
+            ["conversation", "retrieve_cards"]
+        )
+        
+        self.graph.add_conditional_edges(
+            "retrieve_cards",
             self._route_next,
             ["conversation", "free_conversation"]
         )
@@ -347,38 +354,40 @@ Examples:
     
         topic_decision = str(topic_response).strip()
         
+        state = self._reset_learning_states(state)
         if "1" in topic_decision:
             # User has a topic, transition to free conversation
-            state = self._reset_learning_states(state)
             state['next'] = 'free_conversation'
         else:
-            # User doesn't have a topic, try to find Anki cards to discuss
-            try:
-                # Try to find cards from Anki to discuss
-                deck_name = self.config.get('deck_name', 'Kotori')  # Default deck name
-                cards_result = find_cards_to_talk_about.invoke({"deck_name": deck_name, "limit": 1}) # only give one card at a time
-                
-                # Parse the result to check if cards were found
-                if "Error" in cards_result or "No cards found" in cards_result:
-                    # No cards found, transition to free conversation
-                    state = self._reset_learning_states(state)
-                    state['next'] = 'free_conversation'
-                        
-                else:
-                    # Cards found, transition to structured conversation
-                    state = self._reset_learning_states(state)
-                    state['next'] = 'conversation'
-                    # Note: In a real implementation, you'd parse the cards_result 
-                    # and store the card data in state['active_cards']
-                    state['active_cards'] = cards_result
-            
-            except Exception as e:
-                # Error accessing Anki, fallback to free conversation
-                state = self._reset_learning_states(state)
-                state['next'] = 'free_conversation'
+            # User doesn't have a topic, go to retrieve cards
+            state['next'] = 'retrieve_cards'
     
         return state
     
+    async def _retrieve_cards_node(self, state: KotoriState) -> KotoriState:
+        try:
+            # Try to find cards from Anki to discuss
+            deck_name = self.config.get('deck_name', 'Kotori')  # Default deck name
+            cards_result = find_cards_to_talk_about.invoke({"deck_name": deck_name, "limit": 1}) # only give one card at a time
+            
+            # Parse the result to check if cards were found
+            if "Error" in cards_result or "No cards found" in cards_result:
+                # No cards found, transition to free conversation
+                state['next'] = 'free_conversation'
+                    
+            else:
+                # Cards found, transition to structured conversation
+                state['next'] = 'conversation'
+                # Note: In a real implementation, you'd parse the cards_result 
+                # and store the card data in state['active_cards']
+                state['active_cards'] = cards_result
+        
+        except Exception as e:
+            # Error accessing Anki, fallback to free conversation
+            state['next'] = 'free_conversation'
+        
+        return state
+        
     def _reset_learning_states(self, state: KotoriState) -> KotoriState:
         """Reset learning-related states to prepare for a new topic."""
         state['active_cards'] = ''
