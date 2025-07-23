@@ -338,6 +338,11 @@ def query_anki_notes(
             for field_name, field_data in fields.items():
                 field_value = field_data.get('value', '').strip()
                 if field_value:
+                    # Clean CSS blocks and HTML tags
+                    field_value = _remove_css_blocks(field_value)
+                    field_value = re.sub(r'<[^>]*>', '', field_value)
+                    field_value = field_value.strip()
+                    
                     # Truncate long field values
                     if len(field_value) > 100:
                         field_value = field_value[:100] + "..."
@@ -412,6 +417,10 @@ def get_note_by_id(note_id: int) -> str:
         note_details.append("\nFields:")
         for field_name, field_data in fields.items():
             field_value = field_data.get('value', '').strip()
+            # Clean CSS blocks and HTML tags
+            field_value = _remove_css_blocks(field_value)
+            field_value = re.sub(r'<[^>]*>', '', field_value)
+            field_value = field_value.strip()
             note_details.append(f"  {field_name}: {field_value}")
         
         # Add tags
@@ -501,6 +510,11 @@ def search_notes_by_content(content: str, limit: int = 10) -> str:
             for field_name, field_data in fields.items():
                 field_value = field_data.get('value', '').strip()
                 if content.lower() in field_value.lower():
+                    # Clean CSS blocks and HTML tags
+                    field_value = _remove_css_blocks(field_value)
+                    field_value = re.sub(r'<[^>]*>', '', field_value)
+                    field_value = field_value.strip()
+                    
                     # Truncate and highlight
                     if len(field_value) > 80:
                         field_value = field_value[:80] + "..."
@@ -1009,13 +1023,15 @@ def find_cards_to_talk_about(deck_name: Optional[str], limit: int = 5) -> str:
             answer = card.get('answer', '').strip()
             
             if question:
-                # Remove HTML tags
-                question_clean = re.sub(r'<[^>]*>', '', question)
+                # Remove CSS blocks and HTML tags
+                question_clean = _remove_css_blocks(question)
+                question_clean = re.sub(r'<[^>]*>', '', question_clean)
                 card_info['question'] = question_clean.strip()
             
             if answer:
-                # Remove HTML tags
-                answer_clean = re.sub(r'<[^>]*>', '', answer)
+                # Remove CSS blocks and HTML tags
+                answer_clean = _remove_css_blocks(answer)
+                answer_clean = re.sub(r'<[^>]*>', '', answer_clean)
                 card_info['answer'] = answer_clean.strip()
             
             formatted_cards.append(card_info)
@@ -1101,6 +1117,37 @@ def _find_cards_by_query(query: str, anki_connect_url: str, limit: int = 10) -> 
     except Exception as e:
         # Re-raise all other exceptions so they can be handled by the caller
         raise
+
+
+def _remove_css_blocks(text: str) -> str:
+    """
+    Helper function to remove CSS blocks from text.
+    
+    Args:
+        text: Text that may contain CSS blocks
+        
+    Returns:
+        Text with CSS blocks removed
+    """
+    # Remove <style> tags and their content
+    # This handles cases like <style>.card { ... }</style>
+    style_pattern = r'<style[^>]*>.*?</style>'
+    cleaned_text = re.sub(style_pattern, '', text, flags=re.DOTALL | re.IGNORECASE)
+    
+    # Remove bare CSS blocks that start with a selector and contain curly braces
+    # This regex matches CSS blocks like:
+    # .card {
+    #     font-family: arial;
+    #     font-size: 20px;
+    #     ...
+    # }
+    css_pattern = r'\.[\w\-]+\s*\{[^}]*\}'
+    cleaned_text = re.sub(css_pattern, '', cleaned_text, flags=re.DOTALL)
+    
+    # Remove any extra whitespace/newlines that might be left
+    cleaned_text = re.sub(r'\n\s*\n', '\n', cleaned_text)
+    
+    return cleaned_text.strip()
 
 
 def _get_cards_info(card_ids: List[int], anki_connect_url: str) -> List[Dict]:
