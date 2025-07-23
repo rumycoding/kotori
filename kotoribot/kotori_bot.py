@@ -284,13 +284,10 @@ class KotoriBot:
         language = self.config.get('language', 'english')
         learning_goals = state.get("learning_goals", "general")
         system_prompt = '''
-            You are Kotori, a friendly and helpful language learning assistant specialized in teaching {language}.
-            
-            Based on the conversation history and the user's learning goals {learning_goals}, ask the user if they have a specific topic they would like to discuss.
-            
-            Keep your message encouraging, concise, and end with a clear question about if they want to discuss a specific topic.
-            
-            Respond naturally in {language} if the user's level seems intermediate or above, otherwise use simpler {language}.
+You are Kotori, a friendly and helpful language learning assistant specialized in teaching {language}.
+Based on the conversation history and the user's learning goals {learning_goals}, ask the user if they have a specific topic they would like to discuss.
+Keep your message encouraging, concise, and end with a clear question about if they want to discuss a specific topic.
+Respond naturally in {language} if the user's level seems intermediate or above, otherwise use simpler {language}.
         '''
         system_prompt = system_prompt.format(language=language, learning_goals=learning_goals)
         
@@ -320,24 +317,22 @@ class KotoriBot:
     async def _topic_selection_node(self, state: KotoriState) -> KotoriState:
         """Internal node - select appropriate learning topic based on goals."""
         # This is an internal processing node - no assistant message
-        last_human_message = state['messages'][-1]
-        language = self.config.get('language', 'english')
-        
+
         # System prompt to determine if user has a specific topic they want to discuss
         system_prompt = """
-        You are a task manager.  Given a user's recent message history and descriptions of available routes, analyze and determine the next route.
-        Select the appropriate route based on the user's intent and available options. Respond only with the chosen route's number.
-        Routes:
-        1. FREE_CONVERSATION: The user has topics they want to discuss freely.
-        2. GUIDED_CONVERSATION: The user has no specific topics, but you can find Anki cards to discuss.
-        Examples:
-        - "I want to talk about cooking" -> 1
-        - "Let's discuss Japanese culture" -> 1
-        - "I want to do free talk" -> 1
-        - "No, I don't have anything specific" -> 2
-        - "What should we talk about?" -> 2
-        - "I'm not sure" -> 2
-        - "I want to review anki cards" -> 2
+You are a task manager.  Given a user's recent message history and descriptions of available routes, analyze and determine the next route.
+Select the appropriate route based on the user's intent and available options. Respond only with the chosen route's number.
+Routes:
+1. FREE_CONVERSATION: The user has topics they want to discuss freely.
+2. GUIDED_CONVERSATION: The user has no specific topics, but you can find Anki cards to discuss.
+Examples:
+- "I want to talk about cooking" -> 1
+- "Let's discuss Japanese culture" -> 1
+- "I want to do free talk" -> 1
+- "No, I don't have anything specific" -> 2
+- "What should we talk about?" -> 2
+- "I'm not sure" -> 2
+- "I want to review anki cards" -> 2
         """
         
         user_history = self._get_recent_messages(state, count=6)
@@ -363,7 +358,7 @@ class KotoriBot:
             try:
                 # Try to find cards from Anki to discuss
                 deck_name = self.config.get('deck_name', 'Kotori')  # Default deck name
-                cards_result = find_cards_to_talk_about.invoke({"deck_name": deck_name, "limit": 3})
+                cards_result = find_cards_to_talk_about.invoke({"deck_name": deck_name, "limit": 1}) # only give one card at a time
                 
                 # Parse the result to check if cards were found
                 if "Error" in cards_result or "No cards found" in cards_result:
@@ -407,28 +402,39 @@ class KotoriBot:
         
         # Create a simple prompt for the LLM
         system_message = SystemMessage(content=f"""
-        You are Kotori, a helpful language learning assistant specialized in {language}. The user has the following learning goals: {learning_goal}.
+You are Kotori, a helpful {language} language learning assistant.
+ACTIVE CARD: {active_cards}
+User level and learning goal: {learning_goal}
+CORE APPROACH:
+Build the entire conversation around the active card's vocabulary/concept.
 
-        INSTRUCTIONS:
-        1. Create a natural conversation that incorporates at least one of vocabulary from these cards: {active_cards}
-        2. Focus on the user's learning goals: {goals}
-        3. Weave the vocabulary naturally into the conversation - don't explicitly mention you're using specific cards
-        4. Match your language complexity to the user's apparent level:
-            - Use natural {language} for intermediate or advanced learners
-            - Use simpler {language} for beginners
-        5. If the user struggles with a word NOT in the active cards, use the add_anki_note tool to add it to their '{deck}' deck
+STRATEGY:
+1. **Natural Integration**: Introduce the vocabulary organically in your first response within a relatable context
+2. **Deep Practice**: Use the vocabulary 1-2 times per response, ask questions that encourage user practice
+3. **Level-Appropriate**: For beginners: Use simple sentences, provide clear examples, explain meaning if needed; For intermediate users, use natural {language} and encourage complex usage; For advanced users, challenge them with nuanced uses, idioms, or cultural contexts
+4. **Reinforcement**: Acknowledge correct usage positively, provide gentle corrections when needed
+5. **Conversation Flow**: Keep focus on target vocabulary, guide back if conversation drifts
 
-        Your purpose is to create an engaging, helpful learning experience that feels natural while reinforcing vocabulary. Please respond clearly and concisely in {language}.
-        """)
-        
-        prompt = [system_message] + state["messages"]
+TOOLS:
+- Use add_anki_note for new vocabulary the user struggles with (not from active card)
+
+RESPONSE STYLE:
+- Conversational and encouraging
+- 2-3 vocabulary practice opportunities per turn
+- End with questions using target vocabulary
+- Max 2-3 questions at once
+- Clear language appropriate for user level
+
+GOAL: Provide focused, deep practice of the single vocabulary item for true mastery.                               
+""")
         
         # Bind tools and temperature together
         llm_with_tools = self.llm.bind_tools([add_anki_note, check_anki_connection], temperature=self._get_temperature())
         
-        response = await llm_with_tools.ainvoke([
-            system_message]+ state["messages"])
+        recent_messages = self._get_recent_messages(state, count=10)
         
+        response = await llm_with_tools.ainvoke([
+            system_message]+ recent_messages)
         state["messages"].append(response)
         
         if tools_condition(state["messages"]) == "tools":
