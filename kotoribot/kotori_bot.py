@@ -7,7 +7,7 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import create_react_agent, ToolNode, tools_condition
 from langgraph.types import Command, interrupt
 from langchain_core.language_models import BaseLLM
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage, BaseMessage
 from langchain_core.language_models import BaseChatModel  # Change this import
 from langchain_core.runnables import RunnableConfig
 
@@ -275,6 +275,9 @@ class KotoriBot:
         
         return state
     
+    def _get_recent_messages(self, state, count: int = 6) -> List[BaseMessage]:
+        """Get the last 'count' messages from the conversation history."""
+        return state["messages"][-count:] if len(state["messages"]) >= count else state["messages"]
     
     async def _topic_selection_prompt_node(self, state: KotoriState) -> KotoriState:
         """Generate assistant message for topic selection and get user input."""
@@ -291,12 +294,13 @@ class KotoriBot:
         '''
         system_prompt = system_prompt.format(language=language, learning_goals=learning_goals)
         
-        user_messages_history = state["messages"]
+        # Get recent messages to provide context
+        user_messages_history = self._get_recent_messages(state, count=10)
         
         configured_llm = self._get_configured_llm()
         topic_msg = await configured_llm.ainvoke([
             SystemMessage(content=system_prompt)
-        ]+ user_messages_history)
+        ] + user_messages_history)
         
         # Extract content from the response message
         content = getattr(topic_msg, 'content', str(topic_msg))
@@ -321,29 +325,36 @@ class KotoriBot:
         
         # System prompt to determine if user has a specific topic they want to discuss
         system_prompt = """
-        Analyze the user's message to determine if they have a specific topic they want to discuss.
-        
-        Respond with exactly one of these:
-        - "HAS_TOPIC" if the user mentions a specific topic, subject, or theme they want to talk about
-        - "NO_TOPIC" if the user doesn't have a specific topic, says no, or asks for suggestions
-        
+        You are a task manager.  Given a user's recent message history and descriptions of available routes, analyze and determine the next route.
+        Select the appropriate route based on the user's intent and available options. Respond only with the chosen route's number.
+        Routes:
+        1. FREE_CONVERSATION: The user has topics they want to discuss freely.
+        2. GUIDED_CONVERSATION: The user has no specific topics, but you can find Anki cards to discuss.
         Examples:
-        - "I want to talk about cooking" -> HAS_TOPIC
-        - "Let's discuss Japanese culture" -> HAS_TOPIC
-        - "I want to do free talk" -> HAS_TOPIC
-        - "No, I don't have anything specific" -> NO_TOPIC
-        - "What should we talk about?" -> NO_TOPIC
-        - "I'm not sure" -> NO_TOPIC
+        - "I want to talk about cooking" -> 1
+        - "Let's discuss Japanese culture" -> 1
+        - "I want to do free talk" -> 1
+        - "No, I don't have anything specific" -> 2
+        - "What should we talk about?" -> 2
+        - "I'm not sure" -> 2
+        - "I want to review anki cards" -> 2
         """
+        
+        user_history = self._get_recent_messages(state, count=6)
+        
+        user_input = str(
+            "recent messages: \"" + " ".join([f"[{msg.__class__.__name__}] {str(msg.content)}" for msg in user_history]) + " \"" + "Remember you must only output a number which corresponds to a route. "
+            "given above based on your understanding of the recent messages and the user's intent."
+        )
         
         topic_response = self._get_configured_llm().invoke([
             SystemMessage(content=system_prompt),
-            HumanMessage(content=last_human_message.content)
+            HumanMessage(content=user_input)
         ])
     
         topic_decision = str(topic_response).strip()
         
-        if "HAS_TOPIC" in topic_decision:
+        if "1" in topic_decision:
             # User has a topic, transition to free conversation
             state = self._reset_learning_states(state)
             state['next'] = 'free_conversation'
