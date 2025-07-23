@@ -283,8 +283,7 @@ class KotoriBot:
         """Generate assistant message for topic selection and get user input."""
         language = self.config.get('language', 'english')
         learning_goals = state.get("learning_goals", "general")
-        system_prompt = '''
-You are Kotori, a friendly and helpful language learning assistant specialized in teaching {language}.
+        system_prompt = f'''You are Kotori, a friendly and helpful language learning assistant specialized in teaching {language}.
 Based on the conversation history and the user's learning goals {learning_goals}, ask the user if they have a specific topic they would like to discuss.
 Keep your message encouraging, concise, and end with a clear question about if they want to discuss a specific topic.
 Respond naturally in {language} if the user's level seems intermediate or above, otherwise use simpler {language}.
@@ -319,7 +318,7 @@ Respond naturally in {language} if the user's level seems intermediate or above,
         # This is an internal processing node - no assistant message
 
         # System prompt to determine if user has a specific topic they want to discuss
-        system_prompt = """
+        system_prompt = f"""
 You are a task manager.  Given a user's recent message history and descriptions of available routes, analyze and determine the next route.
 Select the appropriate route based on the user's intent and available options. Respond only with the chosen route's number.
 Routes:
@@ -333,8 +332,7 @@ Examples:
 - "What should we talk about?" -> 2
 - "I'm not sure" -> 2
 - "I want to review anki cards" -> 2
-        """
-        
+"""
         user_history = self._get_recent_messages(state, count=6)
         
         user_input = str(
