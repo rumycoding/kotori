@@ -11,7 +11,7 @@ import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '../../../'))
 
-from kotoribot.kotori_bot import KotoriBot, KotoriState, KotoriConfig as OriginalKotoriConfig
+from kotoribot.kotori_bot import KotoriBot, KotoriState, KotoriConfig as OriginalKotoriConfig, get_init_kotori_state
 from ..models import Message, MessageType, StateInfo, ToolCall, AssessmentMetrics
 
 
@@ -56,21 +56,14 @@ class KotoriBotAdapter:
         """Start a new conversation session."""
         # For new conversations, we let the graph start from the beginning
         # The checkpointer will maintain state across sessions
-        if initial_state is None:
-            initial_state = {
-                "messages": [],
-                "learning_goals": "",
-                "next": "",
-                "active_cards": "",
-                "assessment_history": [],
-                "calling_node": "",
-                "counter": 0,
-                "round_start_msg_idx": 0
-            }
         
         # Only set initial state for the very first run
         # After that, let the checkpointer handle state management
-        self.current_state = cast(KotoriState, initial_state)
+        if initial_state is None:
+            self.current_state = get_init_kotori_state()
+        else:
+            self.current_state = cast(KotoriState, initial_state)
+            
         self.conversation_active = True
         
         # Clear message tracking for new conversation

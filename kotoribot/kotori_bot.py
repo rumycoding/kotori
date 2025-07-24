@@ -36,6 +36,10 @@ class KotoriState(TypedDict):
     
     next: str # The next state to transition to
     
+    card_answer_next: str # The next state after answering a card, if applicable, this is a temp workaround
+    
+    need_card_answer: bool  # Whether we need to answer a card in the current round
+    
     active_cards: str
     
     assessment_history: List[str]
@@ -48,7 +52,21 @@ class KotoriConfig(TypedDict):
     language: str # possible values: "english" and "japanese"
     deck_name: Optional[str] # Name of the Anki deck to read, Kotori will always add cards to 'Kotori' deck
     temperature: Optional[float]  # Temperature for LLM responses, default is 0.1
-    
+
+def get_init_kotori_state() -> KotoriState:
+    """Get the initial state for Kotori bot."""
+    return {
+        "messages": [],
+        "round_start_msg_idx": 0,
+        "learning_goals": "",
+        "next": "",
+        "card_answer_next": "",
+        "active_cards": "",
+        "assessment_history": [],
+        "calling_node": "",
+        "counter": 0,
+        "need_card_answer": False
+    }
     
 class KotoriBot:
     """Language learning bot that manages conversation flow and learning state."""
@@ -143,7 +161,7 @@ class KotoriBot:
         self.graph.add_conditional_edges(
             "free_conversation",
             self._route_next,
-            ["topic_selection_prompt", "free_conversation", "free_conversation_eval", "tools"]
+            ["free_conversation_eval", "tools"]
         )
         
         # Assessment node can also use tools
@@ -157,7 +175,7 @@ class KotoriBot:
         self.graph.add_conditional_edges(
             "card_answer",
             self._route_next,
-            ["tools", "topic_selection_prompt"]
+            ["tools", "retrieve_cards", "free_conversation"]
         )
         
         # After tools are executed, we need to route back to the calling node
@@ -172,7 +190,7 @@ class KotoriBot:
         self.graph.add_conditional_edges(
             "free_conversation_eval",
             self._route_next,
-            ["assessment", "topic_selection_prompt", "free_conversation", END]
+            ["topic_selection_prompt", "free_conversation", "retrieve_cards"]
         )
     
     def _route_next(self, state: KotoriState) -> str:
@@ -257,9 +275,9 @@ class KotoriBot:
             # First interaction - generate greeting and get user input
             language = self.config.get('language', 'english')
             if language == "english":
-                greeting_prompt = f"Hello! I'm Kotori, your {language} learning assistant. What is your level and what would you like to learn today?"
+                greeting_prompt = f"""Hey! I'm Kotori 🐦 What's your {language} level? (beginner/intermediate/advanced). And what would you like to focus on today?"""
             elif language == "japanese":
-                greeting_prompt = "こんにちは！私はコトリ、あなたの日本語学習アシスタントです。あなたのレベルと、今日学びたいことは何ですか？"
+                greeting_prompt = f"""こんにちは！コトリ 🐦 です。あなたの日本語レベルを教えてください（初級/中級/上級）。今日は何を勉強したいですか？"""
             else:
                 greeting_prompt = "Language not supported. Please choose English or Japanese."
                 state["next"] = END
@@ -304,29 +322,32 @@ class KotoriBot:
         """Generate assistant message for topic selection and get user input."""
         language = self.config.get('language', 'english')
         learning_goals = state.get("learning_goals", "general")
-        system_prompt = f'''You are Kotori, a friendly and helpful language learning assistant specialized in teaching {language}.
-Based on the conversation history and the user's learning goals {learning_goals}, ask the user if they have a specific topic they would like to discuss.
-Keep your message encouraging, concise, and end with a clear question about if they want to discuss a specific topic.
-Respond naturally in {language} if the user's level seems intermediate or above, otherwise use simpler {language}.
-        '''
-        system_prompt = system_prompt.format(language=language, learning_goals=learning_goals)
         
-        # Get recent messages to provide context
-        user_messages_history = self._get_recent_messages(state, count=10)
+        # Create mode selection prompt based on language
+        if language == "english":
+            mode_prompt = """Great! Now, which mode would you like to try today?
+
+📚 **Study mode**: I'll help you practice with your flashcards - we'll work on specific vocabulary and I'll give you feedback on your progress.
+
+💬 **Chat mode**: We can just have a friendly conversation! I won't correct you unless you specifically ask for help.
+
+Which sounds good to you - study mode or chat mode?"""
+        elif language == "japanese":
+            mode_prompt = """素晴らしい！今日はどのモードを試したいですか？
+
+📚 **学習モード**：フラッシュカードで練習しましょう - 特定の語彙を練習して、進歩についてフィードバックします。
+
+💬 **チャットモード**：友達のように会話しましょう！特別に助けを求めない限り、訂正しません。
+
+どちらがいいですか - 学習モードかチャットモードか？"""
+        else:
+            mode_prompt = "Please select study mode or chat mode."
         
-        configured_llm = self._get_configured_llm()
-        topic_msg = await configured_llm.ainvoke([
-            SystemMessage(content=system_prompt)
-        ] + user_messages_history)
-        
-        # Extract content from the response message
-        content = getattr(topic_msg, 'content', str(topic_msg))
-        
-        # Use interrupt to get user input
-        user_input = interrupt(content)
+        # Use interrupt to get user input directly with the mode selection prompt
+        user_input = interrupt(mode_prompt)
         
         # Add both assistant message and user response to messages
-        state["messages"].append(AIMessage(content=content))
+        state["messages"].append(AIMessage(content=mode_prompt))
         user_msg = HumanMessage(content=user_input)
         state["messages"].append(user_msg)
         
@@ -338,14 +359,28 @@ Respond naturally in {language} if the user's level seems intermediate or above,
         """Internal node - select appropriate learning topic based on goals."""
         # This is an internal processing node - no assistant message
 
-        # System prompt to determine if user has a specific topic they want to discuss
+        # System prompt to determine if user wants study mode or chat mode
         system_prompt = f"""
-You are a task manager.  Given a user's recent message history and descriptions of available routes, analyze and determine the next route.
-Select the appropriate route based on the user's intent and available options. Respond only with the chosen route's number.
+You are a task manager. Given a user's recent message history, analyze and determine which mode they want to use.
+Select the appropriate route based on the user's mode choice. Respond only with the chosen route's number.
+
 Routes:
-1. FREE_CONVERSATION: The user has topics they want to discuss freely.
-2. GUIDED_CONVERSATION: The user has no specific topics, but you can find Anki cards to discuss.
-Examples:
+1. FREE_CONVERSATION: The user wants chat mode, free conversation, or casual talk.
+2. GUIDED_CONVERSATION: The user wants study mode, flashcard practice, or structured learning.
+
+Mode Selection Examples:
+- "chat mode" -> 1
+- "I want to chat" -> 1  
+- "free conversation" -> 1
+- "let's just talk" -> 1
+- "chat mode please" -> 1
+- "study mode" -> 2
+- "flashcards" -> 2
+- "I want to study" -> 2
+- "practice with cards" -> 2
+- "study mode please" -> 2
+
+Topic Examples (if no clear mode is mentioned):
 - "I want to talk about cooking" -> 1
 - "Let's discuss Japanese culture" -> 1
 - "I want to do free talk" -> 1
@@ -370,10 +405,10 @@ Examples:
         
         state = self._reset_learning_states(state)
         if "1" in topic_decision:
-            # User has a topic, transition to free conversation
+            # User wants chat mode/free conversation
             state['next'] = 'free_conversation'
         else:
-            # User doesn't have a topic, go to retrieve cards
+            # User wants study mode, go to retrieve cards
             state['next'] = 'retrieve_cards'
     
         return state
@@ -411,6 +446,8 @@ Examples:
         msg_len = len(state['messages'])
         
         state['round_start_msg_idx'] = msg_len  # Track where the round started
+        state['card_answer_next'] = ''
+        state['need_card_answer'] = False
         return state
     
     async def _conversation_node(self, state: KotoriState) -> KotoriState:
@@ -534,24 +571,12 @@ NEXT_STEPS: [1-2 specific, actionable recommendations]
             assessment_history = state.get("assessment_history", [])
             assessment_history.append(current_assessment)
             state["assessment_history"] = assessment_history
+            state['need_card_answer'] = True  # Indicate we need to answer the card
         
         return state
 
     async def _assessment_node(self, state: KotoriState) -> KotoriState:
-        """Assess user's understanding on the active card."""
-        
-        # Get the latest user message
-        last_user_message = None
-        for msg in reversed(state["messages"]):
-            if isinstance(msg, HumanMessage):
-                last_user_message = msg
-                break
-        
-        if not last_user_message:
-            # No user message to assess, continue conversation
-            state["next"] = "conversation"
-            return state
-        
+        """Assess user's understanding on the active card."""    
         language = self.config.get('language', 'english')
         active_cards = state.get("active_cards", "")
         
@@ -617,12 +642,12 @@ CONVERSATION (Route 3):
                 state = await self._do_card_assessment(state, current_conversation_count)
             
         if "1" in topic_decision:
-            state = self._reset_learning_states(state)
-            state['next'] = 'free_conversation'
+            state['next'] = 'card_answer' 
+            state['card_answer_next'] = 'free_conversation'
         elif "2" in topic_decision:
             # User has demonstrated understanding or wants to change vocabulary
-            state = self._reset_learning_states(state)
-            state['next'] = 'retrieve_cards'
+            state['card_answer_next'] = 'retrieve_cards'
+            state['next'] = 'card_answer'  # Go to card answering node
         else: # Copilot might not know what to do, or it chooses 3, let's continue conversation
             state['next'] = 'conversation'
             
@@ -632,33 +657,48 @@ CONVERSATION (Route 3):
         """Handle answering a specific card using tools."""
         
         # First time in this node - decide what to do based on assessment
-        assessment_history = state.get("assessment_history", "")
+        assessment_history = state.get("assessment_history", [])
         active_cards = state.get("active_cards", "")
+        need_card_answer = state.get("need_card_answer", False)
+
+        # Do assessment to see if we need to answer the card
+        if active_cards != "" and len(assessment_history) > 0 and need_card_answer:
+
+            # Set the calling node for proper routing after tools
+            state["calling_node"] = "card_answer"
+            
+            last_assessment = assessment_history[-1]
+            
+            # Create a prompt for the LLM to decide which tools to use
+            system_prompt = f"""
+            You are helping a language learner practice with Anki cards. 
+            
+            Current active cards: {active_cards}
+            Last assessment: {last_assessment}
+
+            Based on the last assessment and the cards they're working with, you should:
+            Use answer_card to mark cards as answered based on the OVERALL_MASTERY, if the user got 4 or 5, use ease 4; otherwise, use ease the same as OVERALL_MASTERY.
+            """
+            
+            user_prompt = "Please answer the active card based on the last assessment."
+            
+            llm_with_tools = self.llm.bind_tools([answer_card, check_anki_connection], temperature=self._get_temperature())
+            
+            response = await llm_with_tools.ainvoke([
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_prompt)
+            ])
+
+            state["messages"].append(
+                response
+            )
         
-        # Set the calling node for proper routing after tools
-        state["calling_node"] = "card_answer"
+        next = state.get("card_answer_next", "retrieve_cards")
+        if next == "":
+            next = "retrieve_cards"  # Default to retrieving cards if not set
         
-        # Create a prompt for the LLM to decide which tools to use
-        system_prompt = f"""
-        You are helping a language learner practice with Anki cards. 
-        
-        Current active cards: {active_cards}
-        Assessment history: {assessment_history}
-        
-        Based on the assessment history and the cards they're working with, you should:
-        Use answer_card or answer_multiple_cards to mark cards as answered
-        """
-        
-        llm_with_tools = self.llm.bind_tools([answer_card, answer_multiple_cards, check_anki_connection], temperature=self._get_temperature())
-        
-        response = await llm_with_tools.ainvoke([
-            SystemMessage(content=system_prompt)]+ state["messages"])
-        
-        state["messages"].append(
-            response
-        )
-        
-        state["next"] = "topic_selection_prompt"  # After answering, go back to topic selection prompt
+        state["next"] = next
+        state = self._reset_learning_states(state)  # Reset learning states for next round
        
         return state
 
@@ -671,55 +711,50 @@ CONVERSATION (Route 3):
         state["calling_node"] = "free_conversation"
         
         # Create a comprehensive system prompt for the LLM
-        system_prompt = f"""You are Kotori, a friendly and helpful language learning assistant specialized in {language}.
-
+        system_prompt = f"""You are Kotori, a friendly conversation partner who happens to speak {language}. Act like a casual friend having a relaxed chat.
 CURRENT CONTEXT:
 - Target language: {language}
-- User's learning goals: {goals}
-
-YOUR ROLE AND INSTRUCTIONS:
-1. **Natural Conversation**: Engage in natural, flowing conversation that helps the user practice {language}
-2. **Language Level Adaptation**:
-   - Observe the user's {language} level from their messages
-   - Adjust your language complexity accordingly (simpler for beginners, more natural for advanced)
-3. **Learning Support**:
-   - When the user struggles with a word, phrase, or concept, provide helpful explanations
-   - Encourage the user and provide positive feedback on their progress
-4. **Vocabulary Detection and Anki Integration**:
-   - Pay attention to words or phrases the user doesn't know or uses incorrectly
-   - If you notice the user struggling with specific vocabulary that would be useful for them to remember:
-     * Use the add_anki_note tool to create a flashcard
-     * Front: The word/phrase in {language} (keep it concise)
-     * Back: Clear explanation with translation and example usage
-   - Good candidates for Anki notes:
-     * New vocabulary the user asks about
-     * Words they misspell or misuse
-     * Grammar points they struggle with
-     * Useful phrases or expressions
-5. **Conversation Flow**:
-   - Keep the conversation engaging and relevant to their interests
-   - Ask follow-up questions to encourage more practice
-   - Introduce new vocabulary naturally when appropriate
-   - If the conversation stagnates, suggest related topics or activities
-
-TOOL USAGE GUIDELINES:
-- Use add_anki_note strategically when you identify vocabulary the user should study
-- Create clear, helpful flashcards with practical examples
-- Don't overuse the tool - focus on genuinely useful vocabulary
-- When you add a note, briefly mention it: "I've added that to your flashcards!"
+- User's interests: {goals}
+YOUR ROLE - BE A FRIEND, NOT A TEACHER:
+1. **Casual Friend Mode**: 
+   - Chat naturally like you're texting a friend
+   - Focus on the conversation topic, not language learning
+   - Be genuinely interested in what they're saying
+   - React naturally to their thoughts and stories
+2. **NO Unsolicited Corrections**:
+   - NEVER correct grammar, pronunciation, or word choice unless explicitly asked
+   - Ignore spelling mistakes and grammatical errors completely
+   - Don't provide learning tips or feedback unless they ask for help
+   - If you understand what they mean, just respond to the content
+3. **Concise & Natural**:
+   - Keep responses short and conversational (1-3 sentences typically)
+   - Use natural {language} appropriate for casual conversation
+   - Avoid teacher-like explanations or overly detailed responses
+   - Match their energy and conversation style
+4. **Help ONLY When Asked**:
+   - Only provide language help when they explicitly ask: "What does X mean?", "How do I say Y?", "Is this correct?"
+   - When they ask for help, give clear, concise explanations
+   - Use add_anki_note tool only when they specifically ask you to add something to their flashcards
+   - After helping, smoothly return to normal friend conversation
+5. **Friend Conversation Priorities**:
+   - Ask follow-up questions about their life, interests, stories
+   - Share reactions and opinions naturally
+   - Keep conversations flowing with genuine curiosity
+   - Focus on connection and engagement over language practice
 
 RESPONSE STYLE:
-- Be encouraging, patient, and conversational
-- Respond primarily in {language} (adjust complexity based on user level)
-- Provide English explanations when needed for clarity
-- Keep responses natural and engaging, not overly formal or teacher-like
-- Show enthusiasm for their learning progress
+- Talk like a friend, not a language teacher
+- Keep it brief and natural
+- Respond primarily in {language} at an appropriate level for casual chat
+- Only switch to "teacher mode" when explicitly requested
+- Show genuine interest in them as a person, not as a language learner
 
-TOPIC MANAGEMENT:
-- If the user seems to want to change topics, let the conversation flow naturally
-- They can ask to "change topics" or "talk about something else" anytime
+TOOL USAGE:
+- Use add_anki_note ONLY when they explicitly ask to add something to flashcards
+- Don't proactively suggest vocabulary additions
+- When adding notes, keep it brief: "Added!" or "Got it in your flashcards!"
 
-Continue the conversation naturally while being ready to help with vocabulary and learning opportunities."""
+Remember: You're their friend first, language helper second. Let them drive when they want language assistance."""
 
         # Use the full conversation history for context
         messages = [SystemMessage(content=system_prompt)] + state["messages"]
@@ -772,122 +807,115 @@ Continue the conversation naturally while being ready to help with vocabulary an
             return state
         
         language = self.config.get('language', 'english')
-        recent_messages = state["messages"][-6:] if len(state["messages"]) >= 6 else state["messages"]
-        # First, check if the user wants to continue free conversation or change topics
-        continue_conversation_prompt = f"""
-        Analyze the user's latest message to determine their intent for the conversation flow.
+        learning_goals = state.get('learning_goals', 'general conversation')
         
-        TARGET DECISION: Classify the user's intent into exactly ONE category.
+        # Get recent messages for context
+        user_history = self._get_recent_messages(state, count=10)
         
-        INPUT CONTEXT:
-        - Recent message history: {recent_messages}
-        - Current language focus: {language}
+        route_next_system_prompt = f"""
+You are a task manager for {language} free conversation evaluation. Given a user's recent message history during free conversation, analyze and determine the next route.
+Select the appropriate route based on the user's intent and learning preferences. Respond only with the chosen route's number.
+
+CURRENT CONTEXT:
+- Target language: {language}
+- User's level and learning goal: {learning_goals}
+
+Routes:
+1. CONVERSATION: The user wants to learn vocabulary instead of just chatting OR explicitly requests structured learning OR wants to practice with flashcards.
+2. FREE_CONVERSATION: The user wants to keep chatting freely OR asks questions OR continues the current topic naturally OR requests help with vocabulary during conversation.
+
+KEY INSIGHTS: Adding the active card to Anki means they are still engaged with the free conversation → Route 2
+
+Examples:
+CONVERSATION (Route 1):
+- "Can we practice some vocabulary?" → 1
+- "I want to study flashcards now" → 1
+- "Let's do some structured learning" → 1
+- "Can we switch to study mode?" → 1
+
+FREE_CONVERSATION (Route 2):
+- "What does 'beautiful' mean?" → 2
+- "I enjoyed that story. Can you tell me another one?" → 2
+- "That's interesting! Tell me more about it" → 2
+- "How do you say 'dog' in {language}?" → 2
+- User continues conversation naturally → 2
+- "I like talking about this topic" → 2
+- User asks follow-up questions about the current topic → 2
+- "Put the word 'tree' into anki." → 2
+"""
+
+        user_input = str(
+            "recent messages: {{{" + " ".join([f"[{msg.__class__.__name__}] {str(msg.content)}" for msg in user_history]) + "}}} Remember you must only output a number which corresponds to a route. "
+            "given above based on your understanding of the recent messages and the user's intent."
+        )
         
-        CLASSIFICATION CRITERIA:
-        1. "CONTINUE_FREE" if:
-           - User is engaged in the current topic and wants to continue
-           - They ask a follow-up question related to the current topic
-           - They respond naturally without indicating desire for change or feedback
-           - They request vocabulary help without asking for assessment
-        
-        2. "CHANGE_TOPIC" if:
-           - User explicitly mentions wanting a different topic
-           - They express boredom or disinterest in current conversation
-           - They ask to switch to structured learning or flashcard practice
-           - They indicate they're done with the current activity
-           - They use phrases like "let's talk about X instead" or "can we try something else"
-        
-        3. "REQUEST_ASSESSMENT" if:
-           - User explicitly asks for feedback on their language use
-           - They ask how they're doing with grammar, vocabulary, or pronunciation
-           - They ask if a sentence they wrote is correct
-           - They request evaluation of their progress or skills
-           - They produce a complex sentence that suggests they want feedback
-        
-        RESPONSE FORMAT:
-        Return ONLY ONE of these exact strings without explanation:
-        - "CONTINUE_FREE"
-        - "CHANGE_TOPIC" 
-        - "REQUEST_ASSESSMENT"
-        
-        EXAMPLES:
-        "I enjoyed that story. Can you tell me another one?" → CONTINUE_FREE
-        "I don't want to talk about this anymore. What else can we discuss?" → CHANGE_TOPIC
-        "Did I use the past tense correctly in my last sentence?" → REQUEST_ASSESSMENT
-        "Can we practice with flashcards now?" → CHANGE_TOPIC
-        "How's my pronunciation?" → REQUEST_ASSESSMENT
-        "What does this word mean?" → CONTINUE_FREE
-        """
-        
-        conversation_decision_response = await self._get_configured_llm().ainvoke([
-            SystemMessage(content=continue_conversation_prompt)
+        topic_response = await self._get_configured_llm().ainvoke([
+            SystemMessage(content=route_next_system_prompt),
+            HumanMessage(content=user_input)
         ])
+    
+        topic_decision = str(topic_response).strip()
         
-        conversation_decision = str(conversation_decision_response.content).strip()
-        
-        if "CHANGE_TOPIC" in conversation_decision:
-            # User wants to change topics or switch to structured learning
-            state["next"] = "topic_selection_prompt"
-        elif "CONTINUE_FREE" in conversation_decision:
-            # User is asking for something else
+        if "1" in topic_decision:
+            # User wants to learn vocabulary instead of chat
+            state = self._reset_learning_states(state)  # Reset learning states for new topic
+            state["next"] = "retrieve_cards"  # Go to card retrieval node
+        else:
+            # User wants to keep chatting freely
+            await self._perform_free_conversation_assessment(state)
             state["next"] = "free_conversation"
-        elif "REQUEST_ASSESSMENT" in conversation_decision:
-            # User wants assessment on their language use
-            await self._perform_free_conversation_assessment(state, last_user_message)
-            state["next"] = "free_conversation"
-        # else:
-        #     # Continue free conversation - but periodically assess progress
-        #     conversation_length = state.get("counter", 0)
-            
-        #     # Perform assessment every 5-7 user messages to track progress
-        #     if conversation_length % 6 == 0:  # Every 6th user message
-        #         await self._perform_free_conversation_assessment(state, last_user_message)
-        #         state["next"] = "free_conversation"
-        #     else:
-        #         # Continue free conversation without assessment
-        #         state["next"] = "free_conversation"
         
         return state
     
-    async def _perform_free_conversation_assessment(self, state: KotoriState, user_message: HumanMessage) -> None:
+    async def _perform_free_conversation_assessment(self, state: KotoriState) -> None:
         """Perform assessment of user's free conversation performance."""
         language = self.config.get('language', 'english')
         learning_goals = state.get('learning_goals', 'general conversation practice')
+
+        # Get recent conversation context (last 10 messages)
+        user_history = self._get_recent_messages(state, count=10)
+        user_last_message = self._get_recent_messages(state, count=1)
         
-        # Get recent conversation context (last 6 messages)
-        recent_messages = state["messages"][-6:] if len(state["messages"]) >= 6 else state["messages"]
+        if len(user_last_message) > 0:
+            user_message = user_last_message[0]
         
-        assessment_prompt = f"""
-        You are assessing a language learner's conversation in {language}.
-        
-        Learning Goals: {learning_goals}
-        
-        Evaluate the user's messages on these simplified criteria:
-        
-        1. LANGUAGE USE: How well they use vocabulary and grammar
-        2. COMMUNICATION: How effectively they express ideas and maintain conversation
-        3. PROGRESS: Any improvement shown during the conversation
-        
-        Provide a brief assessment:
-        LANGUAGE USE: [score 1-5] - [brief comment on vocabulary and grammar]
-        COMMUNICATION: [score 1-5] - [comment on expression and conversation flow]
-        PROGRESS: [score 1-5] - [note any improvement]
-        OVERALL: [score 1-5] - [summary in 1-2 sentences]
-        NEXT STEPS: [1-2 specific, actionable suggestions]
-        """
-        
-        assessment_response = await self._get_configured_llm().ainvoke([
-            SystemMessage(content=assessment_prompt)
-        ] + recent_messages)
-        
-        # Print the assessment response for debugging
-        print(f"Free Conversation Assessment Response: {assessment_response.content}")
-        
-        # Store the assessment in learning opportunities for later use
-        current_assessment = f"Free Conversation Assessment - {user_message.content[:30]}...: {assessment_response.content}"
-        assessment_history = state.get('assessment_history', [])
-        assessment_history.append(current_assessment)
-        state['assessment_history'] = assessment_history
+            assessment_prompt = f"""
+You are a friendly native {language} speaker helping someone sound more natural. Focus on making their {language} flow like a native speaker's.
+
+User's level: {learning_goals}
+            
+Analyze their latest message for naturalness and provide brief, helpful feedback. Choose only ONE aspect that would be most helpful:
+
+GRAMMAR CORRECTION: [If there are grammar errors, provide the corrected version.]
+
+NATURAL EXPRESSION: [If their message sounds unnatural or awkward, suggest how a native speaker would express the same idea. Focus on authentic word choice, idiomatic phrasing, and conversational flow rather than technical grammar rules. For advanced users, highlight subtle nuances that would make their speech sound more authentic.]
+
+CULTURAL/CONTEXTUAL NOTES: [If relevant, mention how natives actually use these words/phrases in real conversation]
+
+Keep feedback encouraging and practical. Focus on the MOST impactful improvement rather than covering everything.
+            """
+            
+            user_input = str(
+            "recent messages: {{{" + " ".join([f"[{msg.__class__.__name__}] {str(msg.content)}" for msg in user_history]) + "}}}, last message to assess: {{{" + str(user_message.content) + """}}} Please assess the naturalness of the user's last message according to the guidelines. If the message already sounds natural and native-like, or if they're asking for help/clarification, respond with "NO_ASSESSMENT" """
+            )
+            
+            assessment_response = await self._get_configured_llm().ainvoke([
+                SystemMessage(content=assessment_prompt),
+                HumanMessage(content=user_input)
+            ])
+            
+            if "no_assessment" in str(assessment_response).lower():
+                print("No assessment needed for the user's last message.")
+                return
+            
+            # Print the assessment response for debugging
+            print(f"Free Conversation Assessment Response: {assessment_response.content}")
+            
+            # Store the assessment in learning opportunities for later use
+            current_assessment = f"Free Conversation Assessment - {user_message.content[:30]}...: {assessment_response.content}"
+            assessment_history = state.get('assessment_history', [])
+            assessment_history.append(current_assessment)
+            state['assessment_history'] = assessment_history
         
     
     async def run_conversation(self, initial_state: Optional[KotoriState] = None, thread_id: str = "1"):
@@ -898,17 +926,7 @@ Continue the conversation naturally while being ready to help with vocabulary an
         """
                 
         if initial_state is None:
-            initial_state = {
-                "messages": [],
-                "learning_goals": "",
-                "next": "",
-                "active_cards": "",
-                "assessment_history": [],
-                "calling_node": "",
-                "counter": 0,
-                "round_start_msg_idx": 0
-            }
-        
+            initial_state = get_init_kotori_state()
         # Configuration for the thread
         graphconfig = RunnableConfig(
             configurable={"thread_id": thread_id},
