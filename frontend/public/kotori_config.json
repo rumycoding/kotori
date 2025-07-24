@@ -2,7 +2,7 @@
   "config": {
     "language": "japanese",
     "deck_name": "Kotori",
-    "temperature": 0.7
+    "temperature": 1.0
   },
   "saved_at": "2025-07-21T23:30:29.256379",
   "version": "1.0.0"

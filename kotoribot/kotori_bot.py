@@ -142,7 +142,7 @@ class KotoriBot:
         self.graph.add_conditional_edges(
             "topic_selection",
             self._route_next,
-            ["conversation", "retrieve_cards"]
+            ["retrieve_cards", "free_conversation"]
         )
         
         self.graph.add_conditional_edges(
@@ -488,7 +488,10 @@ GOAL: Provide focused, deep practice of the single vocabulary item for true mast
 """)
         
         # Bind tools and temperature together
-        llm_with_tools = self.llm.bind_tools([add_anki_note, check_anki_connection], temperature=self._get_temperature())
+        try:
+            llm_with_tools = self.llm.bind_tools([add_anki_note, check_anki_connection], temperature=self._get_temperature())
+        except:
+            llm_with_tools = self.llm.bind_tools([add_anki_note, check_anki_connection])
         
         recent_messages = self._get_recent_messages(state, count=10)
         
@@ -682,7 +685,10 @@ CONVERSATION (Route 3):
             
             user_prompt = "Please answer the active card based on the last assessment."
             
-            llm_with_tools = self.llm.bind_tools([answer_card, check_anki_connection], temperature=self._get_temperature())
+            try:
+                llm_with_tools = self.llm.bind_tools([answer_card, check_anki_connection], temperature=self._get_temperature())
+            except Exception as e:
+                llm_with_tools = self.llm.bind_tools([answer_card, check_anki_connection])
             
             response = await llm_with_tools.ainvoke([
                 SystemMessage(content=system_prompt),
@@ -760,7 +766,10 @@ Remember: You're their friend first, language helper second. Let them drive when
         messages = [SystemMessage(content=system_prompt)] + state["messages"]
         
         # Bind the add_anki_note tool to the LLM with temperature
-        llm_with_tools = self.llm.bind_tools([add_anki_note, check_anki_connection], temperature=self._get_temperature())
+        try:
+            llm_with_tools = self.llm.bind_tools([add_anki_note, check_anki_connection], temperature=self._get_temperature())
+        except Exception as _:
+            llm_with_tools = self.llm.bind_tools([add_anki_note, check_anki_connection])
         
         # Generate response with tool access
         response = await llm_with_tools.ainvoke(messages)

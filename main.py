@@ -92,7 +92,7 @@ async def main():
     config: KotoriConfig = {
         "language": "english",
         "deck_name": "Kotori",
-        "temperature": 0.1  # Default temperature for LLM responses
+        "temperature": 1  # O3-MINI can only set temperature to 1.0
     }
     
     bot = KotoriBot(model, config)

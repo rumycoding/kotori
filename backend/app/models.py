@@ -32,7 +32,8 @@ class ChatMessage(BaseModel):
 class KotoriConfig(BaseModel):
     language: str = Field(default="english", description="Language for learning (english/japanese)")
     deck_name: Optional[str] = Field(default="Kotori", description="Name of the Anki deck")
-    
+    temperature: float = Field(default=1.0, ge=0.0, le=1.0, description="Temperature for LLM responses")
+
 class SessionConfig(BaseModel):
     session_id: str
     config: KotoriConfig

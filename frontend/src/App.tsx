@@ -60,6 +60,7 @@ const loadConfigFromFile = async (): Promise<KotoriConfig> => {
     return {
       language: 'english',
       deck_name: 'Kotori',
+      temperature: 1
     };
   }
 };
@@ -86,6 +87,7 @@ const App: React.FC = () => {
   const [config, setConfig] = useState<KotoriConfig>({
     language: 'english',
     deck_name: 'Kotori',
+    temperature: 1.0,
   });
   const [uiSettings, setUISettings] = useState<UISettings>({
     theme: 'light',

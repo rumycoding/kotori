@@ -135,7 +135,8 @@ class WebSocketConnectionManager:
         # Create adapter
         adapter_config = {
             "language": config.language,
-            "deck_name": config.deck_name
+            "deck_name": config.deck_name,
+            "temperature": config.temperature
         }
         
         adapter = KotoriBotAdapter(llm, adapter_config)

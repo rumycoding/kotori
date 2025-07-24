@@ -26,6 +26,8 @@ class KotoriBotAdapter:
             "temperature": config.get("temperature", 0.7),
         }
         
+        print(f"Initializing KotoriBot with config: {original_config}")
+        
         self.kotori_bot = KotoriBot(llm, original_config)
         self.session_id = str(uuid.uuid4())
         self.state_callbacks: Dict[str, Callable] = {}

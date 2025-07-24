@@ -10,6 +10,7 @@ export interface Message {
 export interface KotoriConfig {
   language: string;
   deck_name?: string;
+  temperature?: number;
 }
 
 export interface UISettings {
