@@ -64,7 +64,8 @@ class KotoriBotAdapter:
                 "active_cards": "",
                 "assessment_history": [],
                 "calling_node": "",
-                "counter": 0
+                "counter": 0,
+                "round_start_msg_idx": 0
             }
         
         # Only set initial state for the very first run

@@ -30,6 +30,8 @@ class KotoriState(TypedDict):
     # (in this case, it appends messages to the list, rather than overwriting them)
     messages: Annotated[list, add_messages]
     
+    round_start_msg_idx: int  # Index of the message where the current round of conversation started
+    
     learning_goals: str
     
     next: str # The next state to transition to
@@ -41,7 +43,6 @@ class KotoriState(TypedDict):
     calling_node: str  # Track which node called the tools
     
     counter: int
-
     
 class KotoriConfig(TypedDict):
     language: str # possible values: "english" and "japanese"
@@ -284,7 +285,20 @@ class KotoriBot:
     
     def _get_recent_messages(self, state, count: int = 6) -> List[BaseMessage]:
         """Get the last 'count' messages from the conversation history."""
-        return state["messages"][-count:] if len(state["messages"]) >= count else state["messages"]
+        
+        round_start_idx = state.get("round_start_msg_idx", 0)
+        msgs = state.get("messages", [])
+        
+        if not msgs or round_start_idx >= len(msgs):
+            return []
+        
+        # Get messages from the start of the round to the end
+        round_messages = msgs[round_start_idx:]
+        if len(round_messages) < count:
+            return round_messages
+        
+        # Return the last 'count' messages from the round
+        return round_messages[-count:]
     
     async def _topic_selection_prompt_node(self, state: KotoriState) -> KotoriState:
         """Generate assistant message for topic selection and get user input."""
@@ -343,11 +357,11 @@ Examples:
         user_history = self._get_recent_messages(state, count=6)
         
         user_input = str(
-            "recent messages: \"" + " ".join([f"[{msg.__class__.__name__}] {str(msg.content)}" for msg in user_history]) + " \"" + "Remember you must only output a number which corresponds to a route. "
+            "recent messages: {{{" + " ".join([f"[{msg.__class__.__name__}] {str(msg.content)}" for msg in user_history]) + "}}} Remember you must only output a number which corresponds to a route. "
             "given above based on your understanding of the recent messages and the user's intent."
         )
         
-        topic_response = self._get_configured_llm().invoke([
+        topic_response = await self._get_configured_llm().ainvoke([
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_input)
         ])
@@ -368,8 +382,8 @@ Examples:
         try:
             # Try to find cards from Anki to discuss
             deck_name = self.config.get('deck_name', 'Kotori')  # Default deck name
-            cards_result = find_cards_to_talk_about.invoke({"deck_name": deck_name, "limit": 1}) # only give one card at a time
-            
+            cards_result = await find_cards_to_talk_about.ainvoke({"deck_name": deck_name, "limit": 1}) # only give one card at a time
+
             # Parse the result to check if cards were found
             if "Error" in cards_result or "No cards found" in cards_result:
                 # No cards found, transition to free conversation
@@ -392,8 +406,11 @@ Examples:
         """Reset learning-related states to prepare for a new topic."""
         state['active_cards'] = ''
         state['learning_goals'] = ''
-        state['assessment_history'] = []
         state['counter'] = 0
+        
+        msg_len = len(state['messages'])
+        
+        state['round_start_msg_idx'] = msg_len  # Track where the round started
         return state
     
     async def _conversation_node(self, state: KotoriState) -> KotoriState:
@@ -460,8 +477,66 @@ GOAL: Provide focused, deep practice of the single vocabulary item for true mast
         state["next"] = "assessment"  # Move to assessment
         
         return state
-    
-    
+
+    async def _do_card_assessment(self, state: KotoriState, current_conversation_count: int) -> KotoriState:
+        # this is not a node, but a helper function to assess user's understanding of the active card
+        """Assess user's understanding of the active card."""
+        active_cards = state.get("active_cards", "")
+        language = self.config.get('language', 'english')
+        if current_conversation_count > 0 and active_cards != "":
+            user_history = self._get_recent_messages(state, count=current_conversation_count)
+            system_prompt = f"""
+You are assessing a language learner's mastery of vocabulary and grammar in {language} of an active card based on user recent messages.
+
+ACTIVE CARD (either Grammar or Vocabulary): {active_cards}
+
+ASSESSMENT CRITERIA (1-5 scale for each):
+
+1. MEANING UNDERSTANDING (1-5): 
+   - Vocabulary: Do they grasp the word's core meaning, nuances, and different senses?
+   - Grammar: Do they understand what the grammatical structure conveys or expresses?
+
+2. USAGE ACCURACY (1-5):
+   - Vocabulary: Do they use the word with correct form, spelling, and grammatical context?
+   - Grammar: Do they apply the structure with correct form, word order, and morphology?
+
+3. NATURALNESS (1-5):
+   - Vocabulary: Do they use the word in natural collocations, appropriate register, and fitting contexts?
+   - Grammar: Do they use the structure fluently, in appropriate situations, and with natural timing?
+
+SCORING GUIDELINES:
+- 5: Excellent mastery - native-like understanding and usage
+- 4: Good competency - minor gaps but generally accurate and natural
+- 3: Fair grasp - basic understanding with some errors or awkwardness
+- 2: Limited proficiency - significant gaps in understanding or usage
+- 1: Minimal competency - major difficulties across all areas
+
+ASSESSMENT FORMAT:
+== Assessment for [[card front]]
+MEANING_UNDERSTANDING: [score 1-5] - [specific evidence from user's messages briefly summarized]
+USAGE_ACCURACY: [score 1-5] - [examples of correct/incorrect usage briefly summarized]
+NATURALNESS: [score 1-5] - [assessment of natural vs. awkward usage]
+
+OVERALL_MASTERY: [score 1-5] - [brief summary]
+
+NEXT_STEPS: [1-2 specific, actionable recommendations]
+"""
+            user_input = str(
+            "recent messages: {{{" + " ".join([f"[{msg.__class__.__name__}] {str(msg.content)}" for msg in user_history]) + "}}} Analyze the user's recent messages for concrete evidence of these three aspects for the active card. Respond following the ASSESSMENT FORMAT."
+            )
+            
+            assessment_response = await self._get_configured_llm().ainvoke([
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_input)
+            ])
+
+            current_assessment = str(assessment_response.content)
+            assessment_history = state.get("assessment_history", [])
+            assessment_history.append(current_assessment)
+            state["assessment_history"] = assessment_history
+        
+        return state
+
     async def _assessment_node(self, state: KotoriState) -> KotoriState:
         """Assess user's understanding on the active card."""
         
@@ -480,124 +555,77 @@ GOAL: Provide focused, deep practice of the single vocabulary item for true mast
         language = self.config.get('language', 'english')
         active_cards = state.get("active_cards", "")
         
-        # First, check if the user wants to continue the current topic
-        continue_topic_prompt = f"""
-        Analyze the user's latest message to determine their intent for the conversation flow with active cards.
+        # will get the recent messages in this round
+        user_history = self._get_recent_messages(state, count=10)
+        round_start_msg_idx = state.get("round_start_msg_idx", 0)
+        msgs = state.get("messages", [])
+        current_conversation_count = len(msgs) - round_start_msg_idx
+
+        route_next_system_prompt = f"""
+You are a task manager for {language} language learning assessment. Given a user's recent message history and their interaction with active vocabulary cards, analyze and determine the next route.
+Select the appropriate route based on the user's learning progress and intent. Respond only with the chosen route's number.
+ACTIVE CARD: {active_cards}
+CURRENT ROUND MESSAGE COUNT: {current_conversation_count}
+Routes:
+1. FREE_CONVERSATION: The user expresses intent to do free talk or general conversation unrelated to the active card.
+2. RETRIEVE_CARDS: The user has demonstrated sufficient understanding of the active card OR the conversation has exceeded 10 messages in the current round and the user is not asking questions / help / clarification OR the user expresses they want to change to a different vocabulary word.
+3. CONVERSATION: The user needs more practice with the current active card vocabulary OR the user demonstrates intent to continue the topic by asking for help or clarification about the active card vocabulary.
+
+KEY INSIGHT: Adding the active card to Anki means they want to study it more → Route 3
+
+Examples:
+FREE_CONVERSATION (Route 1):
+- "Can we talk about something else?" → 1
+- "I want to do free conversation now" → 1
+- "Let's chat about random topics" → 1
+- "I'm bored with this vocabulary" → 1
+
+RETRIEVE_CARDS (Route 2):
+- User correctly uses active card vocabulary multiple times → 2
+- User shows mastery of current vocabulary → 2
+- CURRENT ROUND MESSAGE COUNT has 10+ messages, and user is not asking more questions or help → 2
+- "Can we talk about a different word?" → 2
+- "I understand this word well now" → 2
+- "Let's try new vocabulary" → 2
+
+CONVERSATION (Route 3):
+- User asks clarifying questions about active vocabulary → 3
+- User struggles with active card concepts → 3
+- User partially understands but needs more practice → 3
+- "What does this word mean again?" → 3
+- "Can you give me another example?" → 3
+- "Put the word 'tree' into anki." → 3
+- "How do I use this word in a sentence?" → 3
+- User attempts to use active vocabulary but makes errors → 3
+"""
+
+        user_input = str(
+            "recent messages: {{{" + " ".join([f"[{msg.__class__.__name__}] {str(msg.content)}" for msg in user_history]) + "}}} Remember you must only output a number which corresponds to a route. "
+            "given above based on your understanding of the recent messages and the user's intent."
+        )
+
+
+        topic_response = await self._get_configured_llm().ainvoke([
+            SystemMessage(content=route_next_system_prompt),
+            HumanMessage(content=user_input)
+        ])
+    
+        topic_decision = str(topic_response).strip()
         
-        TARGET DECISION: Classify the user's intent into exactly ONE category.
-        
-        INPUT CONTEXT:
-        - Current active cards: {active_cards}
-        - Recent conversation history focused on active vocabulary
-        - Target language: {language}
-        
-        CLASSIFICATION CRITERIA:
-        1. "CONTINUE" if:
-           - User responds naturally without using active cards vocabulary
-           - They ask general questions not related to active cards
-           - They continue conversation but don't demonstrate active vocabulary usage
-           - They request clarification about topics unrelated to active cards
-        
-        2. "REQUIRE_ASSESSMENT" if:
-           - User actively uses words, patterns, or grammar from the active cards
-           - They attempt to apply vocabulary from active cards in their response
-           - They demonstrate usage of specific grammar structures from active cards
-           - Their message contains clear attempts at using active cards content
-        
-        3. "CHANGE_TOPIC" if:
-           - User explicitly mentions wanting different vocabulary or topics
-           - They express that they understand the current cards well enough
-           - They ask to move to different flashcards or learning material
-           - They indicate they're done with the current active cards
-           - They use phrases like "I got it" or "let's try different cards"
-        
-        RESPONSE FORMAT:
-        Return ONLY ONE of these exact strings without explanation:
-        - "CONTINUE"
-        - "REQUIRE_ASSESSMENT"
-        - "CHANGE_TOPIC"
-        
-        EXAMPLES:
-        "Can you use that word in another sentence?" → CONTINUE
-        "I think the weather is really [active_card_word] today" → REQUIRE_ASSESSMENT
-        "I understand these words now, can we try others?" → CHANGE_TOPIC
-        "What's the difference between X and Y?" (where X,Y are from active cards) → CONTINUE
-        "Let's practice different vocabulary" → CHANGE_TOPIC
-        "I tried to [active_card_grammar_pattern] yesterday" → REQUIRE_ASSESSMENT
-        """
-        
-        topic_decision_response = await self._get_configured_llm().ainvoke([
-            SystemMessage(content=continue_topic_prompt)
-        ] + state["messages"])
-        
-        topic_decision = str(topic_decision_response.content).strip()
-        
-        if "CHANGE_TOPIC" in topic_decision:
-            # User wants to change topics
-            assessment_history = state.get("assessment_history", "")
+        if "1" in topic_decision or "2" in topic_decision:
+            if current_conversation_count > 0:
+                state = await self._do_card_assessment(state, current_conversation_count)
             
-            if assessment_history:
-                # There's assessment history, proceed to card answering
-                state["next"] = "card_answer"
-            else:
-                # No assessment history, go back to topic selection
-                state["next"] = "topic_selection_prompt"
-        elif "REQUIRE_ASSESSMENT" in topic_decision:
-            # User used active cards vocabulary - perform assessment on their message
-            assessment_prompt = f"""
-            You are assessing a language learner's mastery of specific active vocabulary cards in {language}.
+        if "1" in topic_decision:
+            state = self._reset_learning_states(state)
+            state['next'] = 'free_conversation'
+        elif "2" in topic_decision:
+            # User has demonstrated understanding or wants to change vocabulary
+            state = self._reset_learning_states(state)
+            state['next'] = 'retrieve_cards'
+        else: # Copilot might not know what to do, or it chooses 3, let's continue conversation
+            state['next'] = 'conversation'
             
-            ASSESSMENT FOCUS: Evaluate how well the user demonstrates understanding of the active cards vocabulary.
-            
-            ACTIVE CARDS VOCABULARY: {active_cards}
-            
-            ASSESSMENT CRITERIA:
-            Analyze the user's latest message specifically for their interaction with the active cards vocabulary:
-            
-            1. ACTIVE VOCABULARY USAGE: How correctly they use words/phrases from the active cards
-            2. COMPREHENSION DEPTH: Their demonstrated understanding of the active vocabulary meanings
-            3. CONTEXTUAL APPLICATION: How appropriately they apply active vocabulary in context
-            4. RETENTION INDICATORS: Signs they've internalized the active cards content
-            
-            SCORING GUIDELINES:
-            - 5: Excellent mastery of active cards vocabulary
-            - 4: Good understanding with minor gaps in active vocabulary
-            - 3: Fair grasp of active cards with some confusion
-            - 2: Limited understanding of active vocabulary
-            - 1: Minimal comprehension of active cards content
-            
-            ASSESSMENT FORMAT:
-            ACTIVE_VOCABULARY_USAGE: [score 1-5] - [specific comment on usage of words from active cards]
-            COMPREHENSION_DEPTH: [score 1-5] - [comment on understanding of active vocabulary meanings]
-            CONTEXTUAL_APPLICATION: [score 1-5] - [comment on contextual use of active cards vocabulary]
-            RETENTION_INDICATORS: [score 1-5] - [signs of internalization of active cards content]
-            OVERALL_ACTIVE_CARDS_MASTERY: [score 1-5] - [overall assessment focused on active cards progress]
-            NEXT_STEPS_FOR_ACTIVE_CARDS: [1-2 specific suggestions for improving active vocabulary mastery]
-            
-            FOCUS: Keep assessment strictly related to the active cards vocabulary rather than general language skills.
-            """
-            
-            recent_messages = state["messages"][-6:] if len(state["messages"]) >= 6 else state["messages"]
-            
-            assessment_response = await self._get_configured_llm().ainvoke([
-                SystemMessage(content=assessment_prompt)
-            ] + recent_messages)
-            
-            # Print the assessment response for debugging
-            print(f"Assessment Response: {assessment_response.content}")
-            
-            # Append the assessment to assessment history
-            current_assessment = f"Assessment of message '{last_user_message.content[:50]}...': {assessment_response.content}"
-            assessment_history = state.get("assessment_history", [])
-            assessment_history.append(current_assessment)
-            state["assessment_history"] = assessment_history
-            
-            # Continue the conversation after assessment
-            state["next"] = "conversation"
-        else:
-            # User wants to continue but didn't use active cards vocabulary - no assessment needed
-            state["next"] = "conversation"
-        
         return state
     
     async def _card_answer_node(self, state: KotoriState) -> KotoriState:
@@ -877,7 +905,8 @@ Continue the conversation naturally while being ready to help with vocabulary an
                 "active_cards": "",
                 "assessment_history": [],
                 "calling_node": "",
-                "counter": 0
+                "counter": 0,
+                "round_start_msg_idx": 0
             }
         
         # Configuration for the thread
