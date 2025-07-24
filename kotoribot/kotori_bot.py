@@ -401,7 +401,7 @@ Topic Examples (if no clear mode is mentioned):
             HumanMessage(content=user_input)
         ])
     
-        topic_decision = str(topic_response).strip()
+        topic_decision = str(topic_response.content).strip()
         
         state = self._reset_learning_states(state)
         if "1" in topic_decision:
@@ -638,7 +638,7 @@ CONVERSATION (Route 3):
             HumanMessage(content=user_input)
         ])
     
-        topic_decision = str(topic_response).strip()
+        topic_decision = str(topic_response.content).strip()
         
         if "1" in topic_decision or "2" in topic_decision:
             if current_conversation_count > 0:
@@ -863,7 +863,7 @@ FREE_CONVERSATION (Route 2):
             HumanMessage(content=user_input)
         ])
     
-        topic_decision = str(topic_response).strip()
+        topic_decision = str(topic_response.content).strip()
         
         if "1" in topic_decision:
             # User wants to learn vocabulary instead of chat
@@ -913,7 +913,7 @@ Keep feedback encouraging and practical. Focus on the MOST impactful improvement
                 HumanMessage(content=user_input)
             ])
             
-            if "no_assessment" in str(assessment_response).lower():
+            if "no_assessment" in str(assessment_response.content).lower():
                 print("No assessment needed for the user's last message.")
                 return
             
