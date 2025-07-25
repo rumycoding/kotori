@@ -945,6 +945,51 @@ def answer_multiple_cards(card_answers: List[Dict[str, int]]) -> str:
     except Exception as e:
         return f"Error answering cards: {str(e)}"
 
+@tool
+def relearn_cards(card_ids: List[int]) -> str:
+    """
+    Move cards back to learning state, making them immediately reviewable.
+    
+    Args:
+        card_ids: List of card IDs to move to learning state
+        
+    Returns:
+        String indicating success or failure
+    """
+    try:
+        if not card_ids:
+            return "Error: No card IDs provided"
+        
+        anki_connect_url = "http://localhost:8765"
+        
+        payload = {
+            "action": "relearnCards",
+            "version": 6,
+            "params": {
+                "cards": card_ids
+            }
+        }
+        
+        response = requests.post(anki_connect_url, json=payload, timeout=10)
+        response.raise_for_status()
+        
+        result = response.json()
+        
+        if result.get("error"):
+            return f"Error moving cards to learning state: {result['error']}"
+        
+        # relearnCards returns null on success
+        if result.get("result") is None:
+            return f"Successfully moved {len(card_ids)} cards to learning state. They are now ready for review."
+        else:
+            return f"Cards processed with result: {result.get('result')}"
+        
+    except requests.exceptions.ConnectionError:
+        return "Error: Could not connect to AnkiConnect. Make sure Anki is running and AnkiConnect addon is installed."
+    except requests.exceptions.Timeout:
+        return "Error: Request to AnkiConnect timed out."
+    except Exception as e:
+        return f"Error moving cards to learning state: {str(e)}"
 
 @tool
 def find_cards_to_talk_about(deck_name: Optional[str], limit: int = 5) -> str:
@@ -973,17 +1018,15 @@ def find_cards_to_talk_about(deck_name: Optional[str], limit: int = 5) -> str:
         # Build deck filter
         deck_filter = f'deck:"{deck_name}" ' if deck_name else ""
         
-        # Priority 1: Due cards
+        # # Priority 1: Due cards
         search_queries.append((f"{deck_filter}is:due", "due"))
         
-        # Priority 2: Learning cards
+        # # Priority 2: Learning cards
         search_queries.append((f"{deck_filter}is:learn", "learning"))
         
         # Priority 3: Review cards
         search_queries.append((f"{deck_filter}is:review", "review"))
-        
-        # Priority 4: Any cards
-        search_queries.append((f"{deck_filter}*", "any"))
+
         
         found_cards = []
         selected_category = None

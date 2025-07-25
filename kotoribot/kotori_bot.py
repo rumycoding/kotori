@@ -7,9 +7,10 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import create_react_agent, ToolNode, tools_condition
 from langgraph.types import Command, interrupt
 from langchain_core.language_models import BaseLLM
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage, BaseMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage, BaseMessage, ToolCall
 from langchain_core.language_models import BaseChatModel  # Change this import
 from langchain_core.runnables import RunnableConfig
+import re
 
 
 from anki.anki import (
@@ -21,7 +22,8 @@ from anki.anki import (
     search_notes_by_content,
     find_cards_to_talk_about,
     answer_card,
-    answer_multiple_cards
+    answer_multiple_cards,
+    relearn_cards
 )
 
 class KotoriState(TypedDict):
@@ -168,7 +170,7 @@ class KotoriBot:
         self.graph.add_conditional_edges(
             "assessment",
             self._route_next,
-            ["card_answer", "conversation"]
+            ["card_answer", "conversation", "free_conversation", "retrieve_cards"]
         )
         
         # Card answer node can either use tools or go to next state
@@ -574,8 +576,9 @@ NEXT_STEPS: [1-2 specific, actionable recommendations]
             assessment_history = state.get("assessment_history", [])
             assessment_history.append(current_assessment)
             state["assessment_history"] = assessment_history
-            state['need_card_answer'] = True  # Indicate we need to answer the card
-        
+            # state['need_card_answer'] = True  # Indicate we need to answer the card
+            await self._do_card_answer(state, current_assessment, active_cards)
+
         return state
 
     async def _assessment_node(self, state: KotoriState) -> KotoriState:
@@ -643,19 +646,62 @@ CONVERSATION (Route 3):
         if "1" in topic_decision or "2" in topic_decision:
             if current_conversation_count > 0:
                 state = await self._do_card_assessment(state, current_conversation_count)
-            
+        
         if "1" in topic_decision:
-            state['next'] = 'card_answer' 
+            state['next'] = 'free_conversation' 
+            state = self._reset_learning_states(state)  # Reset learning states for next round
             state['card_answer_next'] = 'free_conversation'
         elif "2" in topic_decision:
             # User has demonstrated understanding or wants to change vocabulary
+            state = self._reset_learning_states(state)  # Reset learning states for next round
             state['card_answer_next'] = 'retrieve_cards'
-            state['next'] = 'card_answer'  # Go to card answering node
+            state['next'] = 'retrieve_cards'  # Go to card answering node
         else: # Copilot might not know what to do, or it chooses 3, let's continue conversation
             state['next'] = 'conversation'
             
         return state
     
+    async def _do_card_answer(self, state, assessment: str, card: str):
+        """Perform the card answering logic based on assessment and card data."""
+        # This function would typically interact with Anki to mark the card as answered
+        # For now, we just simulate this action
+        print(f"Answering card: {card} based on assessment: {assessment}")
+        
+        if card != "" and assessment != "":
+            card_id = ""
+            card_id_match = re.search(r'ID: (\d+)', card)
+            
+            if card_id_match:
+                card_id = card_id_match.group(1)
+            
+            overall_mastery_match = re.search(r'OVERALL_MASTERY: (\d)', assessment)
+            overall_mastery = 0
+            if overall_mastery_match:
+                try:
+                    overall_mastery = int(overall_mastery_match.group(1))
+                except ValueError:
+                    overall_mastery = 0
+                
+                if overall_mastery >= 4:
+                    overall_mastery = 4  # Use ease 4 for high mastery
+            
+            if card_id != "" and overall_mastery > 0:
+                
+                relearn_result = await relearn_cards.ainvoke({"card_ids": [card_id]})
+                
+                # Call the Anki tool to answer the card
+                result = await answer_card.ainvoke({"card_id": card_id, "ease": overall_mastery})
+
+                result = "Card call for ID: " + card_id + " with ease: " + str(overall_mastery) + ": " + str(relearn_result) + ", " + str(result)
+
+                state["messages"].append(
+                    ToolMessage(
+                        name = "answer_card",
+                        tool_call_id = "answer_card_" + card_id,
+                        content=result
+                    )
+                )
+
     async def _card_answer_node(self, state: KotoriState) -> KotoriState:
         """Handle answering a specific card using tools."""
         
