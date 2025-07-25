@@ -50,7 +50,7 @@ AZURE_MODEL_NAME=o4-mini
 
 ### 3. Install Dependencies
 
-#### For CLI Only:
+#### For CLI Only (If you only want to check how Kotori works):
 
 ```bash
 # Please setup your python venv first
@@ -58,12 +58,11 @@ pip install-r requirements.txt
 
 ```
 
-#### For Full Setup (CLI + Web UI):
+#### For Full Setup (Web UI):
 
 ```bash
 # Please setup your python venv first
 # Install Python dependencies
-pip install-r requirements.txt
 pip install-r backend/requirements.txt
 
 # Install Node.js dependencies
@@ -85,7 +84,7 @@ If you do not install anki, you could not run study mode
 
 ## 🖥️ Usage
 
-### CLI Interface
+### CLI Interface (If you only want to check how Kotori works)
 
 Run Kotori in command line mode:
 
@@ -104,7 +103,7 @@ python main.py
 - All core learning features available
 - Perfect for trying
 
-### Web UI Interface
+### Web UI Interface (Recommended)
 
 Start the full web application:
 
@@ -191,7 +190,7 @@ graph TD
 3. **Tool Integration**: Both modes can call Anki tools (dotted lines) for flashcard operations
 
 #### Key Components:
-- **� User Interaction** (Blue): Direct user input and mode selection
+- **🔵 User Interaction** (Blue): Direct user input and mode selection
 - **🟢 Study Mode** (Green): Structured vocabulary practice with Anki cards  
 - **🟣 Chat Mode** (Purple): Free conversation with language feedback to improve naturalness
 - **🟡 Processing** (Orange): Internal logic for card retrieval and assessment
@@ -213,7 +212,7 @@ The assessment uses a 1-5 scale and provides specific feedback for targeted impr
 kotori/
 ├── kotoribot/                # 🧠 Core conversation engine, review this for main logic
 ├── anki/                     # Anki integration tools
-├── backend/                  # FastAPI application
+├── backend/                  # FastAPI application (wraps kotoribot/)
 ├── frontend/                 # User interface
 │   └── public/               # config (like select language is here!)
 ├── scripts/                  # help you get start
