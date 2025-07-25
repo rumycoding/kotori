@@ -703,57 +703,57 @@ CONVERSATION (Route 3):
                     )
                 )
 
-    async def _card_answer_node(self, state: KotoriState) -> KotoriState:
-        """Handle answering a specific card using tools."""
+    # async def _card_answer_node(self, state: KotoriState) -> KotoriState:
+    #     """Handle answering a specific card using tools."""
         
-        # First time in this node - decide what to do based on assessment
-        assessment_history = state.get("assessment_history", [])
-        active_cards = state.get("active_cards", "")
-        need_card_answer = state.get("need_card_answer", False)
+    #     # First time in this node - decide what to do based on assessment
+    #     assessment_history = state.get("assessment_history", [])
+    #     active_cards = state.get("active_cards", "")
+    #     need_card_answer = state.get("need_card_answer", False)
 
-        # Do assessment to see if we need to answer the card
-        if active_cards != "" and len(assessment_history) > 0 and need_card_answer:
+    #     # Do assessment to see if we need to answer the card
+    #     if active_cards != "" and len(assessment_history) > 0 and need_card_answer:
 
-            # Set the calling node for proper routing after tools
-            state["calling_node"] = "card_answer"
+    #         # Set the calling node for proper routing after tools
+    #         state["calling_node"] = "card_answer"
             
-            last_assessment = assessment_history[-1]
+    #         last_assessment = assessment_history[-1]
             
-            # Create a prompt for the LLM to decide which tools to use
-            system_prompt = f"""
-            You are helping a language learner practice with Anki cards. 
+    #         # Create a prompt for the LLM to decide which tools to use
+    #         system_prompt = f"""
+    #         You are helping a language learner practice with Anki cards. 
             
-            Current active cards: {active_cards}
-            Last assessment: {last_assessment}
+    #         Current active cards: {active_cards}
+    #         Last assessment: {last_assessment}
 
-            Based on the last assessment and the cards they're working with, you should:
-            Use answer_card to mark cards as answered based on the OVERALL_MASTERY, if the user got 4 or 5, use ease 4; otherwise, use ease the same as OVERALL_MASTERY.
-            """
+    #         Based on the last assessment and the cards they're working with, you should:
+    #         Use answer_card to mark cards as answered based on the OVERALL_MASTERY, if the user got 4 or 5, use ease 4; otherwise, use ease the same as OVERALL_MASTERY.
+    #         """
             
-            user_prompt = "Please answer the active card based on the last assessment."
+    #         user_prompt = "Please answer the active card based on the last assessment."
             
-            try:
-                llm_with_tools = self.llm.bind_tools([answer_card, check_anki_connection], temperature=self._get_temperature())
-            except Exception as e:
-                llm_with_tools = self.llm.bind_tools([answer_card, check_anki_connection])
+    #         try:
+    #             llm_with_tools = self.llm.bind_tools([answer_card, check_anki_connection], temperature=self._get_temperature())
+    #         except Exception as e:
+    #             llm_with_tools = self.llm.bind_tools([answer_card, check_anki_connection])
             
-            response = await llm_with_tools.ainvoke([
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=user_prompt)
-            ])
+    #         response = await llm_with_tools.ainvoke([
+    #             SystemMessage(content=system_prompt),
+    #             HumanMessage(content=user_prompt)
+    #         ])
 
-            state["messages"].append(
-                response
-            )
+    #         state["messages"].append(
+    #             response
+    #         )
         
-        next = state.get("card_answer_next", "retrieve_cards")
-        if next == "":
-            next = "retrieve_cards"  # Default to retrieving cards if not set
+    #     next = state.get("card_answer_next", "retrieve_cards")
+    #     if next == "":
+    #         next = "retrieve_cards"  # Default to retrieving cards if not set
         
-        state["next"] = next
-        state = self._reset_learning_states(state)  # Reset learning states for next round
+    #     state["next"] = next
+    #     state = self._reset_learning_states(state)  # Reset learning states for next round
        
-        return state
+    #     return state
 
     async def _free_conversation_node(self, state: KotoriState) -> KotoriState:
         """Handle free-form conversation with tool access for adding Anki notes."""
@@ -918,12 +918,12 @@ FREE_CONVERSATION (Route 2):
             state["next"] = "retrieve_cards"  # Go to card retrieval node
         else:
             # User wants to keep chatting freely
-            await self._perform_free_conversation_assessment(state)
+            state = await self._perform_free_conversation_assessment(state)
             state["next"] = "free_conversation"
         
         return state
     
-    async def _perform_free_conversation_assessment(self, state: KotoriState) -> None:
+    async def _perform_free_conversation_assessment(self, state: KotoriState) -> KotoriState:
         """Perform assessment of user's free conversation performance."""
         language = self.config.get('language', 'english')
         learning_goals = state.get('learning_goals', 'general conversation practice')
@@ -942,7 +942,7 @@ User's level: {learning_goals}
             
 Analyze their latest message for naturalness and provide brief, helpful feedback. Choose only ONE aspect that would be most helpful:
 
-GRAMMAR CORRECTION: [If there are grammar errors, provide the corrected version.]
+GRAMMAR CORRECTION: [If there are grammar errors, provide the corrected version. Ignore punctuation and spelling mistakes unless they affect meaning. Focus on common errors that would be noticeable to a native speaker.]
 
 NATURAL EXPRESSION: [If their message sounds unnatural or awkward, suggest how a native speaker would express the same idea. Focus on authentic word choice, idiomatic phrasing, and conversational flow rather than technical grammar rules. For advanced users, highlight subtle nuances that would make their speech sound more authentic.]
 
@@ -972,6 +972,8 @@ Keep feedback encouraging and practical. Focus on the MOST impactful improvement
             assessment_history = state.get('assessment_history', [])
             assessment_history.append(current_assessment)
             state['assessment_history'] = assessment_history
+        
+        return state
     
     async def run_conversation(self, initial_state: Optional[KotoriState] = None, thread_id: str = "1"):
         """
