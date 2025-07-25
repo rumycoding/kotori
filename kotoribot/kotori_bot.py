@@ -109,16 +109,16 @@ class KotoriBot:
         """Set up all the nodes in the state graph."""
         # Nodes that use interrupts for user input
         self.graph.add_node("greeting", self._greeting_node)
-        self.graph.add_node("topic_selection_prompt", self._topic_selection_prompt_node)
+        self.graph.add_node("mode_selection_prompt", self._mode_selection_prompt_node)
         self.graph.add_node("conversation", self._conversation_node)
         self.graph.add_node("free_conversation", self._free_conversation_node)
         
         # Internal processing nodes (no user input needed)
         self.graph.add_node("retrieve_cards", self._retrieve_cards_node)
         self.graph.add_node("assessment", self._assessment_node)
-        self.graph.add_node("topic_selection", self._topic_selection_node)
+        self.graph.add_node("mode_selection", self._mode_selection_node)
         self.graph.add_node("free_conversation_eval", self._free_conversation_eval_node)
-        self.graph.add_node("card_answer", self._card_answer_node)
+        # self.graph.add_node("card_answer", self._card_answer_node)
         
         # Add the tool node for handling tool calls
         self.graph.add_node("tools", self.tool_node)
@@ -132,17 +132,17 @@ class KotoriBot:
         self.graph.add_conditional_edges(
             "greeting",
             self._route_next,
-            ["topic_selection_prompt", "greeting", END]
+            ["mode_selection_prompt", "greeting", END]
         )
         
         self.graph.add_conditional_edges(
-            "topic_selection_prompt",
+            "mode_selection_prompt",
             self._route_next,
-            ["topic_selection"]
+            ["mode_selection"]
         )
         
         self.graph.add_conditional_edges(
-            "topic_selection",
+            "mode_selection",
             self._route_next,
             ["retrieve_cards", "free_conversation"]
         )
@@ -157,7 +157,7 @@ class KotoriBot:
         self.graph.add_conditional_edges(
             "conversation",
             self._route_next,
-            ["assessment", "conversation", "topic_selection_prompt", "tools"]
+            ["assessment", "conversation", "mode_selection_prompt", "tools"]
         )
         
         self.graph.add_conditional_edges(
@@ -170,29 +170,30 @@ class KotoriBot:
         self.graph.add_conditional_edges(
             "assessment",
             self._route_next,
-            ["card_answer", "conversation", "free_conversation", "retrieve_cards"]
+            ["conversation", "free_conversation", "retrieve_cards"]
         )
         
         # Card answer node can either use tools or go to next state
-        self.graph.add_conditional_edges(
-            "card_answer",
-            self._route_next,
-            ["tools", "retrieve_cards", "free_conversation"]
-        )
+        # this could be removed
+        # self.graph.add_conditional_edges(
+        #     "card_answer",
+        #     self._route_next,
+        #     ["tools", "retrieve_cards", "free_conversation"]
+        # )
         
         # After tools are executed, we need to route back to the calling node
         # We'll use a custom routing function to determine where to return
         self.graph.add_conditional_edges(
             "tools",
             self._route_after_tools,
-            ["card_answer", "conversation", "topic_selection", "free_conversation"]
+            ["conversation", "mode_selection", "free_conversation"]
         )
         
         # Internal nodes route automatically
         self.graph.add_conditional_edges(
             "free_conversation_eval",
             self._route_next,
-            ["topic_selection_prompt", "free_conversation", "retrieve_cards"]
+            ["mode_selection_prompt", "free_conversation", "retrieve_cards"]
         )
     
     def _route_next(self, state: KotoriState) -> str:
@@ -209,16 +210,16 @@ class KotoriBot:
         # You can implement different strategies here:
         
         # Strategy 1: Use a field in state to track the calling node
-        calling_node = state.get("calling_node", "topic_selection_prompt")
+        calling_node = state.get("calling_node", "mode_selection_prompt")
         
         # Validate that the calling node is a valid destination
-        valid_destinations = ["card_answer", "conversation", "assessment", "topic_selection", "free_conversation"]
+        valid_destinations = ["card_answer", "conversation", "assessment", "mode_selection", "free_conversation"]
         
         if calling_node in valid_destinations:
             return calling_node
         else:
-            # Fallback to topic_selection if invalid calling node
-            return "topic_selection_prompt"
+            # Fallback to mode_selection if invalid calling node
+            return "mode_selection_prompt"
     
     def _get_temperature(self) -> float:
         """Return the temperature for LLM responses."""
@@ -296,10 +297,10 @@ class KotoriBot:
             
             # Process user's learning goals
             state["learning_goals"] = user_input
-            state["next"] = "topic_selection_prompt"  # Move to topic selection
+            state["next"] = "mode_selection_prompt"  # Move to topic selection
         else:
             # This shouldn't happen in normal flow, but handle gracefully
-            state["next"] = "topic_selection_prompt"
+            state["next"] = "mode_selection_prompt"
         
         return state
     
@@ -320,7 +321,7 @@ class KotoriBot:
         # Return the last 'count' messages from the round
         return round_messages[-count:]
     
-    async def _topic_selection_prompt_node(self, state: KotoriState) -> KotoriState:
+    async def _mode_selection_prompt_node(self, state: KotoriState) -> KotoriState:
         """Generate assistant message for topic selection and get user input."""
         language = self.config.get('language', 'english')
         learning_goals = state.get("learning_goals", "general")
@@ -353,12 +354,12 @@ Which sounds good to you - study mode or chat mode?"""
         user_msg = HumanMessage(content=user_input)
         state["messages"].append(user_msg)
         
-        state["next"] = "topic_selection"
+        state["next"] = "mode_selection"
         
         return state
         
-    async def _topic_selection_node(self, state: KotoriState) -> KotoriState:
-        """Internal node - select appropriate learning topic based on goals."""
+    async def _mode_selection_node(self, state: KotoriState) -> KotoriState:
+        """Internal node - select appropriate learning mode/ chat mode based on goals."""
         # This is an internal processing node - no assistant message
 
         # System prompt to determine if user wants study mode or chat mode
@@ -858,7 +859,7 @@ Remember: You're their friend first, language helper second. Let them drive when
         
         if not last_user_message:
             # No user message to evaluate, go back to topic selection
-            state["next"] = "topic_selection_prompt"
+            state["next"] = "mode_selection_prompt"
             return state
         
         language = self.config.get('language', 'english')
@@ -971,7 +972,6 @@ Keep feedback encouraging and practical. Focus on the MOST impactful improvement
             assessment_history = state.get('assessment_history', [])
             assessment_history.append(current_assessment)
             state['assessment_history'] = assessment_history
-        
     
     async def run_conversation(self, initial_state: Optional[KotoriState] = None, thread_id: str = "1"):
         """
