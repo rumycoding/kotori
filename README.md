@@ -54,7 +54,7 @@ AZURE_MODEL_NAME=o4-mini
 
 ```bash
 # Please setup your python venv first
-pip install-r requirements.txt
+pip install -r requirements.txt
 
 ```
 
@@ -63,7 +63,7 @@ pip install-r requirements.txt
 ```bash
 # Please setup your python venv first
 # Install Python dependencies
-pip install-r backend/requirements.txt
+pip install -r backend/requirements.txt
 
 # Install Node.js dependencies
 cd frontend
@@ -73,13 +73,13 @@ cd ..
 
 ```
 
-### 4. Setup Anki (Optional but Recommended)
+### 4. Setup Anki
 If you do not install anki, you could not run study mode
 
 1. Install [Anki Desktop](https://apps.ankiweb.net/)
 2. Install the [AnkiConnect](https://ankiweb.net/shared/info/2055492159) add-on
    * more detail instruction for this: [amikey/anki-connect: https://github.com/FooSoft/anki-connect.git](https://github.com/amikey/anki-connect)
-3. Create a deck named "Kotori" (or specify your deck name in configuration)
+3. Create some cards and mark them as due, Kotori will only query for words that need review, mark the words as due and then you could review it
 4. Ensure Anki is running when using Kotori
 
 ## 🖥️ Usage
@@ -240,8 +240,7 @@ config = {"language": "japanese", "deck_name": "Japanese_Core", , "temperature":
 ## 🚧 Limitations
 
 ### Performance Considerations
-- **Single-threaded Processing**: The current implementation processes Anki operations sequentially, which may cause delays during card retrieval and assessment
-- **Synchronous Anki Operations**: Card answering and assessment operations are not optimized for concurrent execution
+- **Single-threaded Processing**: The current implementation processes llm calls and Anki operations sequentially, which may cause delays during card retrieval and assessment. But these tasks are independent and could be optimized for concurrent execution.
 
 ### Error Handling
 - **Limited Retry Logic**: Connection errors with Anki or Azure OpenAI may cause the bot to become unresponsive

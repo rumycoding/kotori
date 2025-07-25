@@ -962,7 +962,7 @@ Keep feedback encouraging and practical. Focus on the MOST impactful improvement
             
             if "no_assessment" in str(assessment_response.content).lower():
                 print("No assessment needed for the user's last message.")
-                return
+                return state
             
             # Print the assessment response for debugging
             print(f"Free Conversation Assessment Response: {assessment_response.content}")
