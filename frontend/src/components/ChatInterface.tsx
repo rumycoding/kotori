@@ -30,7 +30,6 @@ interface ChatInterfaceProps {
   sessionId: string;
   config: KotoriConfig;
   uiSettings: UISettings;
-  onConfigChange: (config: KotoriConfig) => void;
   onUISettingsChange: (settings: UISettings) => void;
 }
 
@@ -38,7 +37,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   sessionId,
   config,
   uiSettings,
-  onConfigChange,
   onUISettingsChange,
 }) => {
   // State management

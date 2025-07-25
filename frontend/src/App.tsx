@@ -225,11 +225,11 @@ const App: React.FC = () => {
   const loadSavedSettings = () => {
     try {
       // Load config from localStorage and merge with current config (from file)
-      const savedConfig = localStorage.getItem('kotori_config');
-      if (savedConfig) {
-        const parsedConfig = JSON.parse(savedConfig);
-        setConfig(currentConfig => ({ ...currentConfig, ...parsedConfig }));
-      }
+      // const savedConfig = localStorage.getItem('kotori_config');
+      // if (savedConfig) {
+      //   const parsedConfig = JSON.parse(savedConfig);
+      //   setConfig(currentConfig => ({ ...currentConfig, ...parsedConfig }));
+      // }
 
       // Load UI settings from localStorage
       const savedUISettings = localStorage.getItem('kotori_ui_settings');
@@ -239,17 +239,6 @@ const App: React.FC = () => {
       }
     } catch (err) {
       console.warn('Failed to load saved settings:', err);
-    }
-  };
-
-  const handleConfigChange = (newConfig: KotoriConfig) => {
-    setConfig(newConfig);
-    
-    // Save to localStorage
-    try {
-      localStorage.setItem('kotori_config', JSON.stringify(newConfig));
-    } catch (err) {
-      console.warn('Failed to save config to localStorage:', err);
     }
   };
 
@@ -420,7 +409,6 @@ const App: React.FC = () => {
         sessionId={sessionId}
         config={config}
         uiSettings={uiSettings}
-        onConfigChange={handleConfigChange}
         onUISettingsChange={handleUISettingsChange}
       />
     </ThemeProvider>

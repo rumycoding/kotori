@@ -877,10 +877,17 @@ CURRENT CONTEXT:
 - User's level and learning goal: {learning_goals}
 
 Routes:
-1. CONVERSATION: The user wants to learn vocabulary instead of just chatting OR explicitly requests structured learning OR wants to practice with flashcards.
-2. FREE_CONVERSATION: The user wants to keep chatting freely OR asks questions OR continues the current topic naturally OR requests help with vocabulary during conversation.
+1. CONVERSATION: The user explicitly wants to SWITCH MODES from free chat to structured vocabulary study OR wants to practice with flashcards in a formal learning session.
+2. FREE_CONVERSATION: The user wants to keep chatting freely OR asks for help with specific words/phrases during conversation OR continues the current topic naturally.
 
-KEY INSIGHTS: Adding the active card to Anki means they are still engaged with the free conversation → Route 2
+CRITICAL DISTINCTION:
+- Asking "What does X mean?" or "I don't know this word" during conversation = Route 2 (they want help while chatting)
+- Saying "Let's study vocabulary now" or "Can we do flashcards?" = Route 1 (they want to switch to study mode)
+
+KEY INSIGHTS: 
+- Questions about specific words/meanings during conversation indicate they want to continue chatting with help → Route 2
+- Adding vocabulary to Anki means they are still engaged with the free conversation → Route 2
+- Only explicit requests to change learning modes should trigger Route 1
 
 Examples:
 CONVERSATION (Route 1):
@@ -888,16 +895,23 @@ CONVERSATION (Route 1):
 - "I want to study flashcards now" → 1
 - "Let's do some structured learning" → 1
 - "Can we switch to study mode?" → 1
+- "I want to do vocabulary drills" → 1
 
 FREE_CONVERSATION (Route 2):
 - "What does 'beautiful' mean?" → 2
+- "I don't know that word" → 2
+- "I don't understand what you just said" → 2
+- "How do you say 'dog' in {language}?" → 2
+- "Can you explain that word?" → 2
+- "What's the meaning of X?" → 2
 - "I enjoyed that story. Can you tell me another one?" → 2
 - "That's interesting! Tell me more about it" → 2
-- "How do you say 'dog' in {language}?" → 2
 - User continues conversation naturally → 2
 - "I like talking about this topic" → 2
 - User asks follow-up questions about the current topic → 2
 - "Put the word 'tree' into anki." → 2
+- "I'm confused about what you said" → 2
+- "Could you repeat that?" → 2
 """
 
         user_input = str(
